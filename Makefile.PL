@@ -7,5 +7,6 @@ WriteMakefile(
     'PREREQ_PM'		=> { Net::Telnet => 3.02,
 			     Term::ReadKey => 2,
 			     Test::More => undef,
+			     Cwd => undef,
 			   }, # e.g., Module::Name => 1.1
 );

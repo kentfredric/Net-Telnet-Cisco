@@ -1,4 +1,4 @@
-$Id: Changes,v 1.10 2002/01/30 23:46:15 jkeroes Exp $
+$Id: Changes,v 1.17 2002/03/22 18:51:28 jkeroes Exp $
 
 Revision history for Perl extension Net::Telnet::Cisco.
 
@@ -54,3 +54,11 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- Better internal prompt handling
 	- Better error reporting from invalid prompts
 	- Testing: Errmode set to \&Test::More::fail
+
+1.09  Wed Mar 13 12:45:33 PST 2002
+	- Autopage bugfix - 1st line of every page after the 1st was missing
+	- New method: normalize_cmd() - strips ^H, ^?, and ^U
+	- Defaults now listed in docs
+	- Project has a home: NetTelnetCisco.sourceforge.net
+	- New method: ios_break() - sends control-^
+	- Using ExtUtils::MakeMaker::prompt in test.pl for noninteractive installs

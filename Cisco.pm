@@ -3,13 +3,15 @@ package Net::Telnet::Cisco;
 #-----------------------------------------------------------------
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.35 2002/01/30 23:41:54 jkeroes Exp $
+# $Id: Cisco.pm,v 1.44 2002/03/22 18:48:20 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
 # POD documentation at end of file.
 #
 #-----------------------------------------------------------------
+
+require 5.005;
 
 use strict;
 use Net::Telnet 3.02;
@@ -19,7 +21,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION $DEBUG);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = 1.08;
+$VERSION  = 1.09;
 $^W       = 1;
 $DEBUG    = 0;
 $|++;
@@ -48,6 +50,7 @@ sub new {
 	waitfor_pause	       => 0.1,
 	autopage	       => 1,
 	more_prompt	       => '/(?m:^\s*--More--)/',
+	normalize_cmd	       => 1,
     };
 
     ## Parse the args.
@@ -76,6 +79,9 @@ sub new {
 	    }
             elsif (/^-?autopage$/i) {
                 $self->autopage($args{$_});
+	    }
+            elsif (/^-?normalize_cmd$/i) {
+                $self->normalize_cmd($args{$_});
 	    }
 	}
     }
@@ -131,32 +137,47 @@ sub cmd {
     my $self             = shift;
     my $ok               = 1;
 
-    # Extract the command.
+    my $normalize	 = $self->normalize_cmd;
+
+    # Parse args
     if (@_ == 1) {
 	$ {*$self}{net_telnet_cisco}{last_cmd} = $_[0];
     } elsif ( @_ >= 2 ) {
 	my @args = @_;
 	while (my ($k, $v) = splice @args, 0, 2) {
 	    $ {*$self}{net_telnet_cisco}{last_cmd} = $v if $k =~ /^-?[Ss]tring$/;
+	    $normalize = $v if $k =~ /^-?[Nn]ormalize_cmd$/;
 	}
     }
 
-    my $cmd	   = $ {*$self}{net_telnet_cisco}{last_cmd};
-    my $old_ors	   = $self->output_record_separator;
-    my $need_more  = 0;
+    my $cmd		 = $ {*$self}{net_telnet_cisco}{last_cmd};
+    my $old_ors		 = $self->output_record_separator;
+    my $need_more	 = 0;
     my @out;
-
 
     while(1) {
 	# Send a space (with no newline) whenever we see a "More" prompt.
 	if ($need_more) {
 	    $self->output_record_separator('');
-	    push @out, $self->SUPER::cmd(" ");
+
+	    # We saw a more prompt, so put it in the command output.
+	    my @tmp = $self->last_prompt;
+
+	    # Send the <space>, taking care not to
+	    # discard the top line.
+	    push @tmp, $self->SUPER::cmd(String => " ", Cmd_remove_mode => 0);
+
+	    if ($self->normalize_cmd) {
+		push @out, _normalize(@tmp);
+	    } else {
+		push @out, @tmp;
+	    }
 	} else {
 	    $self->output_record_separator($old_ors);
 	    push @out, $self->SUPER::cmd(@_);
 	}
 
+	# Look for errors in output
 	for ( my ($i, $lastline) = (0, '');
 	      $i <= $#out;
 	      $lastline = $out[$i++] ) {
@@ -186,6 +207,7 @@ sub cmd {
 	    }
 	}
 
+	# Restore old settings
 	$self->output_record_separator($old_ors);
 
 	# redo the while loop if we saw a More prompt.
@@ -518,6 +540,18 @@ sub disable {
     return $self->is_enabled ? $self->error('Failed to exit enabled mode') : 1;
 }
 
+# Send control-^ (without newline)
+sub ios_break {
+    my $self = shift;
+
+    my $old_ors = $self->output_record_separator;
+    $self->output_record_separator('');
+    my $ret = $self->print("\c^");
+    $self->output_record_separator($old_ors);
+
+    return $ret;
+}
+
 # Displays the last prompt.
 sub last_prompt {
     my $self = shift;
@@ -561,6 +595,14 @@ sub autopage {
     my $stream = $ {*$self}{net_telnet_cisco};
     $stream->{autopage} = $arg if defined $arg;
     return $stream->{autopage};
+}
+
+# Typical get/set method.
+sub normalize_cmd {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    $stream->{normalize_cmd} = $arg if defined $arg;
+    return $stream->{normalize_cmd};
 }
 
 # Get/set the More prompt
@@ -616,6 +658,17 @@ sub re_sans_delims {
 #------------------------------
 # Private methods
 #------------------------------
+
+# strip backspaces, deletes, kills, and the character they
+# pertain to, from an array.
+sub _normalize {
+    $_ = join "", @_;
+
+    1 while s/[^\cH\c?][\cH\c?]//mg; # ^H ^?
+    s/^.*\cU//mg;		     # ^U
+
+    return wantarray ? split /$/mg, $_ : $_; # ORS instead?
+}
 
 # Lifted from Net::Telnet en toto
 sub _match_check {
@@ -725,10 +778,11 @@ SNMP, there's Net::Telnet::Cisco.
 =item B<new> - create new Net::Telnet::Cisco object
 
     $session = Net::Telnet::Cisco->new(
-	[Autopage		  => $boolean,]
-	[More_prompt		  => $matchop,]
-	[Always_waitfor_prompt	  => $boolean,]
-	[Waitfor_pause		  => $milliseconds,]
+	[Autopage		  => $boolean,] # 1
+	[More_prompt		  => $matchop,] # '/(?m:^\s*--More--)/',
+	[Always_waitfor_prompt	  => $boolean,] # 1
+	[Waitfor_pause		  => $milliseconds,] # 0.1
+	[Normalize_cmd		  => $boolean,] # 1
 	
 	# Net::Telnet arguments
 	[Binmode		  => $mode,]
@@ -762,6 +816,27 @@ Creates a new object. Read `perldoc perlboot` if you don't understand that.
 
 All arguments are optional as of v1.05. Some routers don't ask for a
 username, they start the login conversation with a password request.
+
+=item B<cmd> - send a command
+
+             $ok = $obj->cmd($string);
+             $ok = $obj->cmd(String   => $string,
+                             [Output  => $ref,]
+                             [Prompt  => $match,]
+                             [Timeout => $secs,]
+                             [Cmd_remove_mode => $mode,]);
+
+             @output = $obj->cmd($string);
+             @output = $obj->cmd(String   => $string,
+                                 [Output  => $ref,]
+                                 [Prompt  => $match,]
+                                 [Timeout => $secs,]
+                                 [Cmd_remove_mode => $mode,]
+                                 [Normalize_cmd => $boolean,]);
+
+Normalize_cmd has been added to the default Net::Telnet args. It
+lets you temporarily change whether backspace, delete, and kill
+characters are parsed in the command output. (This is performed by default)
 
 =item B<prompt> - return control to the program whenever this string occurs in router output
 
@@ -848,6 +923,13 @@ privilege")> instead.
 
 This method exits the router's privileged mode.
 
+=item B<ios_break> - send a break (control-^)
+
+    $ok = $obj->ios_break;
+
+You may have to use errmode(), fork, or threads to break at the
+an appropriate time.
+
 =item B<last_prompt> - displays the last prompt matched by prompt()
 
     $match = $obj->last_prompt;
@@ -860,6 +942,8 @@ prompt.
     $boolean = $obj->always_waitfor_prompt;
 
     $boolean = $obj->always_waitfor_prompt($boolean);
+
+Default value: 1
 
 If you pass a Prompt argument to cmd() or waitfor() a String or Match,
 they will return control on a successful match of your argument(s) or
@@ -875,6 +959,8 @@ prompt.
 
     $boolean = $obj->waitfor_pause($milliseconds);
 
+Default value: 0.1
+
 In rare circumstances, the last_prompt is set incorrectly. By adding
 a very small delay before calling the parent class's waitfor(), this
 bug is eliminated. If you ever find reason to modify this from it's
@@ -886,10 +972,27 @@ default setting, please let me know.
 
     $boolean = $obj->autopage($boolean);
 
+Default value: 1
+
 IOS pages output by default. It expects human eyes to be reading the
 output, not programs. Humans hit the spacebar to scroll page by
 page so autopage() mimicks that behaviour. This is the slow way to
 handle paging. See the Paging EXAMPLE for a faster way.
+
+=item B<normalize_cmd> - Turn normalization on and off
+
+    $boolean = $obj->normalize_cmd;
+
+    $boolean = $obj->normalize_cmd($boolean);
+
+Default value: 1
+
+IOS clears '--More--' prompts with backspaces (e.g. ^H). If
+you're excited by the thought of having raw control characters
+like ^H (backspace), ^? (delete), and ^U (kill) in your command
+output, turn this feature off.
+
+Logging is unaffected by this setting.
 
 =item B<more_prompt> - Regex used by autopage()
 
@@ -897,7 +1000,7 @@ handle paging. See the Paging EXAMPLE for a faster way.
 
     $prev = $obj->prompt($matchop);
 
-Default is '/(?m:\s*--More--)/'.
+Default value: '/(?m:\s*--More--)/'.
 
 Please email me if you find others.
 
@@ -990,9 +1093,9 @@ e.g.
 
 =head2 Backup via TFTP
 
-  Backs up the running-confg to a TFTP server. Backup file is in
-  the form "router-confg". Make sure that file exists on the TFTP
-  server or the transfer will fail!
+Backs up the running-confg to a TFTP server. Backup file is in
+the form "router-confg". Make sure that file exists on the TFTP
+server or the transfer will fail!
 
   my $backup_host  = "tftpserver.somewhere.net";
   my $device	   = "cisco.somewhere.net";
@@ -1015,32 +1118,59 @@ e.g.
      		    . "tftp://$backup_host/$device-confg\n\n\n");
   }
 
+=head1 SUPPORT
+
+http://NetTelnetCisco.sourceforge.net/
+
+=head2 Mailing lists
+
+I<nettelnetcisco-announce> is for important security bulletins and upgrades. Very low traffic, no spam, B<HIGHLY RECOMMENDED!>
+http://lists.sourceforge.net/lists/listinfo/nettelnetcisco-announce
+
+I<nettelnetcisco-users> is for usage discussion, help, tips, tricks, etc.
+http://lists.sourceforge.net/lists/listinfo/nettelnetcisco-users
+
+I<nettelnetcisco-devel> is for uber-hackers; you know who you are.
+http://lists.sourceforge.net/lists/listinfo/nettelnetcisco-devel
+
+=head2 Help/discussion forums
+
+http://sourceforge.net/forum/?group_id=48856
+
+=head2 Bug tracker
+
+http://sourceforge.net/tracker/?group_id=48856
+
 =head1 SEE ALSO
 
 L<Net::Telnet>
+
 L<Net::SNMP>
-L<UCD NetSNMP webpage http:E<sol>E<sol>www.netsnmp.orgE<sol>>
-L<RATE<sol>NCAT project http:E<sol>E<sol>ncat.sourceforge.netE<sol>>
+
+UCD NetSNMP - http://www.netsnmp.org/
+
+RAT/NCAT - http://ncat.sourceforge.net/
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2002/01/30 23:41:54 $
+Joshua_Keroes@eli.net $Date: 2002/03/22 18:48:20 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.
 
-As of Jan 2002, 150 people have emailed me. N::T::C is used to
-help manage over 10,000 machines! Keep the email rolling in!
+As of Mar 2002, 170 people have emailed me. N::T::C is used to
+help manage over 14,000 machines! Keep the email rolling in!
 
 =head1 THANKS
 
 The following people understand what Open Source Software is all
 about. Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony
 Mueller, Frank Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen,
-Niels van Dijke, Kevin der Kinderen, Ian Batterbee, and Leonardo Cont.
+Niels van Dijke, Kevin der Kinderen, Ian Batterbee, Leonardo Cont,
+Steve Meier, and Andre Bonhote.
 
-Institutions: infobot.org #perl, perlmonks.org, the geeks at
-geekhouse.org, and eli.net.
+Institutions: infobot.org #perl, perlmonks.org, sourceforge.net,
+the geeks at geekhouse.org, and eli.net.
 
 Send in a patch and we can make the world a better place.
 

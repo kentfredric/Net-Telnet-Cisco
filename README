@@ -43,10 +43,11 @@ CAVEATS
 METHODS
     new - create new Net::Telnet::Cisco object
             $session = Net::Telnet::Cisco->new(
-                [Autopage                 => $boolean,]
-                [More_prompt              => $matchop,]
-                [Always_waitfor_prompt    => $boolean,]
-                [Waitfor_pause            => $milliseconds,]
+                [Autopage                 => $boolean,] # 1
+                [More_prompt              => $matchop,] # '/(?m:^\s*--More--)/',
+                [Always_waitfor_prompt    => $boolean,] # 1
+                [Waitfor_pause            => $milliseconds,] # 0.1
+                [Normalize_cmd            => $boolean,] # 1
         
                 # Net::Telnet arguments
                 [Binmode                  => $mode,]
@@ -80,6 +81,27 @@ METHODS
 
         All arguments are optional as of v1.05. Some routers don't ask for a
         username, they start the login conversation with a password request.
+
+    cmd - send a command
+                     $ok = $obj->cmd($string);
+                     $ok = $obj->cmd(String   => $string,
+                                     [Output  => $ref,]
+                                     [Prompt  => $match,]
+                                     [Timeout => $secs,]
+                                     [Cmd_remove_mode => $mode,]);
+
+                     @output = $obj->cmd($string);
+                     @output = $obj->cmd(String   => $string,
+                                         [Output  => $ref,]
+                                         [Prompt  => $match,]
+                                         [Timeout => $secs,]
+                                         [Cmd_remove_mode => $mode,]
+                                         [Normalize_cmd => $boolean,]);
+
+        Normalize_cmd has been added to the default Net::Telnet args. It
+        lets you temporarily change whether backspace, delete, and kill
+        characters are parsed in the command output. (This is performed by
+        default)
 
     prompt - return control to the program whenever this string occurs in
     router output
@@ -163,6 +185,12 @@ METHODS
 
         This method exits the router's privileged mode.
 
+    ios_break - send a break (control-^)
+            $ok = $obj->ios_break;
+
+        You may have to use errmode(), fork, or threads to break at the an
+        appropriate time.
+
     last_prompt - displays the last prompt matched by prompt()
             $match = $obj->last_prompt;
 
@@ -173,6 +201,8 @@ METHODS
             $boolean = $obj->always_waitfor_prompt;
 
             $boolean = $obj->always_waitfor_prompt($boolean);
+
+        Default value: 1
 
         If you pass a Prompt argument to cmd() or waitfor() a String or
         Match, they will return control on a successful match of your
@@ -187,6 +217,8 @@ METHODS
 
             $boolean = $obj->waitfor_pause($milliseconds);
 
+        Default value: 0.1
+
         In rare circumstances, the last_prompt is set incorrectly. By adding
         a very small delay before calling the parent class's waitfor(), this
         bug is eliminated. If you ever find reason to modify this from it's
@@ -197,17 +229,33 @@ METHODS
 
             $boolean = $obj->autopage($boolean);
 
+        Default value: 1
+
         IOS pages output by default. It expects human eyes to be reading the
         output, not programs. Humans hit the spacebar to scroll page by page
         so autopage() mimicks that behaviour. This is the slow way to handle
         paging. See the Paging EXAMPLE for a faster way.
+
+    normalize_cmd - Turn normalization on and off
+            $boolean = $obj->normalize_cmd;
+
+            $boolean = $obj->normalize_cmd($boolean);
+
+        Default value: 1
+
+        IOS clears '--More--' prompts with backspaces (e.g. ^H). If you're
+        excited by the thought of having raw control characters like ^H
+        (backspace), ^? (delete), and ^U (kill) in your command output, turn
+        this feature off.
+
+        Logging is unaffected by this setting.
 
     more_prompt - Regex used by autopage()
             $matchop = $obj->prompt;
 
             $prev = $obj->prompt($matchop);
 
-        Default is '/(?m:\s*--More--)/'.
+        Default value: '/(?m:\s*--More--)/'.
 
         Please email me if you find others.
 
@@ -296,9 +344,9 @@ EXAMPLES
 
   Backup via TFTP
 
-      Backs up the running-confg to a TFTP server. Backup file is in
-      the form "router-confg". Make sure that file exists on the TFTP
-      server or the transfer will fail!
+    Backs up the running-confg to a TFTP server. Backup file is in the form
+    "router-confg". Make sure that file exists on the TFTP server or the
+    transfer will fail!
 
       my $backup_host  = "tftpserver.somewhere.net";
       my $device       = "cisco.somewhere.net";
@@ -321,27 +369,56 @@ EXAMPLES
                         . "tftp://$backup_host/$device-confg\n\n\n");
       }
 
+SUPPORT
+    http://NetTelnetCisco.sourceforge.net/
+
+  Mailing lists
+
+    *nettelnetcisco-announce* is for important security bulletins and
+    upgrades. Very low traffic, no spam, HIGHLY RECOMMENDED!
+    http://lists.sourceforge.net/lists/listinfo/nettelnetcisco-announce
+
+    *nettelnetcisco-users* is for usage discussion, help, tips, tricks, etc.
+    http://lists.sourceforge.net/lists/listinfo/nettelnetcisco-users
+
+    *nettelnetcisco-devel* is for uber-hackers; you know who you are.
+    http://lists.sourceforge.net/lists/listinfo/nettelnetcisco-devel
+
+  Help/discussion forums
+
+    http://sourceforge.net/forum/?group_id=48856
+
+  Bug tracker
+
+    http://sourceforge.net/tracker/?group_id=48856
+
 SEE ALSO
-    Net::Telnet Net::SNMP "UCD NetSNMP webpage http://www.netsnmp.org/"
-    "RAT/NCAT project http://ncat.sourceforge.net/"
+    Net::Telnet
+
+    Net::SNMP
+
+    UCD NetSNMP - http://www.netsnmp.org/
+
+    RAT/NCAT - http://ncat.sourceforge.net/
 
 AUTHOR
-    Joshua_Keroes@eli.net $Date: 2002/01/30 23:50:40 $
+    Joshua_Keroes@eli.net $Date: 2002/03/22 18:57:33 $
 
     It would greatly amuse the author if you would send email to him and
     tell him how you are using Net::Telnet::Cisco.
 
-    As of Jan 2002, 150 people have emailed me. N::T::C is used to help
-    manage over 10,000 machines! Keep the email rolling in!
+    As of Mar 2002, 170 people have emailed me. N::T::C is used to help
+    manage over 14,000 machines! Keep the email rolling in!
 
 THANKS
     The following people understand what Open Source Software is all about.
     Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony Mueller, Frank
     Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen, Niels van Dijke,
-    Kevin der Kinderen, Ian Batterbee, and Leonardo Cont.
+    Kevin der Kinderen, Ian Batterbee, Leonardo Cont, Steve Meier, and Andre
+    Bonhote.
 
-    Institutions: infobot.org #perl, perlmonks.org, the geeks at
-    geekhouse.org, and eli.net.
+    Institutions: infobot.org #perl, perlmonks.org, sourceforge.net, the
+    geeks at geekhouse.org, and eli.net.
 
     Send in a patch and we can make the world a better place.
 

@@ -1,11 +1,14 @@
-# $Id: test.pl,v 1.13 2002/01/30 23:13:50 jkeroes Exp $
+# $Id: test.pl,v 1.18 2002/03/22 18:47:44 jkeroes Exp $
 #
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
-use Test::More tests => 30;
+use Test::More tests => 32;
 #use Test::More qw/no_plan/;
+use ExtUtils::MakeMaker qw/prompt/;
 use Term::ReadKey;
+use Carp;
+use Cwd;
 
 use vars qw/$ROUTER $PASSWD $LOGIN $S $EN_PASS $PASSCODE/;
 
@@ -22,10 +25,8 @@ BEGIN { use_ok("Net::Telnet::Cisco") }
 
 ok($Net::Telnet::Cisco::VERSION, 	"\$VERSION set");
 
-use Carp;
-
 SKIP: {
-    skip("Won't login to router without a login and password.", 19)
+    skip("Won't login to router without a login and password.", 27)
 	unless $LOGIN && $PASSWD;
 
     ok( $S = Net::Telnet::Cisco->new( Errmode	 => \&fail,
@@ -45,6 +46,24 @@ SKIP: {
     ok( $out[-1] !~ /--More--/, 	"autopage() last line"	);
     ok( $S->last_prompt !~ /--More--/,	"autopage() last prompt" );
 
+    open LOG, "< $input_log" or die "Can't open log: $!";
+    my $log = join "", <LOG>;
+    close LOG;
+
+    # Remove last prompt, which isn't present in @out
+    $log =~ s/\cJ\cJ.*\Z//m;
+
+    # get rid of "show ver" line
+    shift @out;
+
+    # Strip ^Hs from log
+    $log = Net::Telnet::Cisco::_normalize($log);
+
+    my $out = join "", @out;
+    $out =~ s/\cJ\cJ.*\Z//m;
+
+    my $i = index $log, $out;
+    ok( $i + length $out == length $log, "autopage() 1.09 bugfix" );
 
     # Turn off autopaging. We should timeout with a More prompt
     # on the last line.
@@ -64,8 +83,15 @@ SKIP: {
     ok( $S->waitfor($S->prompt),	"waitfor() prompt"	);
     ok( $S->cmd('show clock'),		"cmd() short"		);
     ok( $S->cmd('show ver'),		"cmd() medium"		);
-    ok( $S->cmd('show run'),		"cmd() long"		);
+    ok( @confg = $S->cmd('show run'),	"cmd() long"		);
 
+    # breaks
+    $old_timeout = $S->timeout;
+    $S->timeout(1);
+    $S->errmode(sub { $S->ios_break });
+    @break_confg = $S->cmd('show run');
+    $S->timeout($old_timeout);
+    ok( @break_confg < @confg,		"ios_break()"		);
 
     # Error handling
     my $seen;
@@ -96,14 +122,14 @@ SKIP: {
 
     # restore errmode to test default.
     $S->errmode(sub {&fail});
-    ok ($S->cmd("show clock"),		"cmd() after waitfor()" );
+    ok( $S->cmd("show clock"),		"cmd() after waitfor()" );
 
     # log checks
     ok( -e $input_log, 			"input_log() created"	);
     ok( -e $dump_log, 			"dump_log() created"	);
 
-    $S = Net::Telnet::Cisco->new( Prompt => "/broken_pre1.8/" 	);
-    ok( $S->prompt eq "/broken_pre1.8/", "new(args) bugfix"	);
+    $S = Net::Telnet::Cisco->new( Prompt => "/broken_pre1.08/" 	);
+    ok( $S->prompt eq "/broken_pre1.08/", "new(args) 1.08 bugfix" );
 }
 
 SKIP: {
@@ -114,9 +140,35 @@ SKIP: {
     ok( $S->is_enabled,			"is_enabled()"		);
 }
 
+END { cleanup() };
+
 #------------------------------------------------------------
 # subs
 #------------------------------------------------------------
+
+sub cleanup {
+    return unless -f "input.log" || -f "dump.log";
+
+    print <<EOB;
+
+Would you like to delete the test logs? They will contain
+security info like your login and passwords. If you ran
+into problems and wish to investigate, you can save them
+and manually delete them later.
+EOB
+
+    my $dir = cwd();
+
+    my $ans = prompt("Delete logs", "y");
+    if ($ans eq "y") {
+	print "Deleting logs in $dir...";
+	unlink "input.log" or warn "Can't delete input.log! $!";
+	unlink "dump.log"  or warn "Can't delete dump.log! $!";
+	print "done.\n";
+    } else {
+	warn "Not deleting logs in $dir.\n";
+    }
+}
 
 sub get_login {
     print <<EOB;
@@ -130,46 +182,41 @@ SecurID/TACACS PASSCODE.
 To skip these tests, hit "return".
 
 EOB
-    print "Router: " unless $ROUTER;
-    $ROUTER ||= <STDIN>;
-    chomp $ROUTER;
-    return unless $ROUTER;
 
-    print "Login: " unless $LOGIN;
-    $LOGIN ||= <STDIN>;
-    chomp $LOGIN;
-    return unless $LOGIN;
+    $ROUTER   = prompt("Router:", $ROUTER) or return;
+    $LOGIN    = prompt("Login:", $LOGIN) or return;
+    $PASSWD   = passprompt("Password:", $PASSWD) or return;
+    $EN_PASS  = passprompt("Enable password [optional]:", $EN_PASS);
+    $PASSCODE = passprompt("SecurID/TACACS PASSCODE [optional]:", $PASSCODE);
+}
 
-    print "Passwd: " unless $PASSWD;
 
-    if ( $Term::ReadKey::VERSION ) {
-	ReadMode( 'noecho' );
-	$PASSWD ||= ReadLine(0);
-	chomp $PASSWD;
-	ReadMode( 'normal' );
+# Lifted from ExtUtils::MakeMaker.
+#
+# If the user has Term::ReadKey, we can hide any passwords
+# they type from shoulder-surfing attacks.
+#
+# Args: "Question for user", "optional default answer"
+sub passprompt ($;$) {
+    my($mess,$def)=@_;
+    $ISA_TTY = -t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT)) ;   # Pipe?
+    Carp::confess("prompt function called without an argument") unless defined $mess;
+    my $dispdef = defined $def ? "[$def] " : " ";
+    $def = defined $def ? $def : "";
+    my $ans;
+    local $|=1;
+    print "$mess $dispdef";
+    if ($ISA_TTY) {
+	if ( $Term::ReadKey::VERSION ) {
+	    ReadMode( 'noecho' );
+	    chomp($ans = ReadLine(0));
+	    ReadMode( 'normal' );
+	    print "\n";
+	} else {
+	    chomp($ans = <STDIN>);
+	}
     } else {
-	$PASSWD = <STDIN>;
-	chomp $PASSWD;
+        print "$def\n";
     }
-    print "\n";
-
-    return unless $PASSWD;
-
-    print "Enable Passwd [optional] : " unless $EN_PASS;
-
-    if ( $Term::ReadKey::VERSION ) {
-	ReadMode( 'noecho' );
-	$EN_PASS ||= ReadLine(0);
-	chomp $EN_PASS;
-	ReadMode( 'normal' );
-	print "\n";
-    } else {
-	$EN_PASS = <STDIN>;
-	chomp $EN_PASS;
-    }
-    print "SecurID/TACACS PASSCODE [optional] : " unless $PASSCODE;
-    $PASSCODE ||= <STDIN>;
-    chomp $PASSCODE;
-    print "\n";
-
+    return ($ans ne '') ? $ans : $def;
 }
