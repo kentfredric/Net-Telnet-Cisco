@@ -3,7 +3,7 @@ package Net::Telnet::Cisco;
 #-----------------------------------------------------------------
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.28 2002/01/10 20:51:06 jkeroes Exp $
+# $Id: Cisco.pm,v 1.31 2002/01/14 17:29:10 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
@@ -19,7 +19,8 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.05';
+$VERSION  = '1.06';
+$^W       = 1;
 
 #------------------------------
 # New Methods
@@ -114,7 +115,7 @@ sub enable {
 	}
     }
 
-    if (not defined $en_level or $en_level > 1) {
+    if (not defined $en_level or $en_level =~ /^[1-9]/) {
 	# Prompts and levels over 1 give a #/(enable) prompt.
 	return $self->is_enabled ? 1 : &$error('Failed to enter enable mode');
     } else {
@@ -255,7 +256,6 @@ sub cmd {
 	}
     }
 
-    my $ok    = 1;
     my $cmd   = $ {*$self}{net_telnet_cisco}{last_cmd};
 
 # placeholder
@@ -357,7 +357,7 @@ sub waitfor {
 	    or $self->error("waitfor can't autoadd prompt. Something's very broken.");
     }
 
-    return "Godot ain't home - waitfor() isn't waiting for anything."
+    return $self->error("Godot ain't home - waitfor() isn't waiting for anything.")
 	unless $all_prompts || @literals;
 
     # There's a timing issue that I can't quite figure out.
@@ -863,7 +863,7 @@ L<RATE<sol>NCAT project http:E<sol>E<sol>ncat.sourceforge.netE<sol>>
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2002/01/10 20:51:06 $
+Joshua_Keroes@eli.net $Date: 2002/01/14 17:29:10 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.
@@ -885,7 +885,7 @@ Send in a patch and we can make the world a better place.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2000-2001 Joshua Keroes, Electric Lightwave Inc.
+Copyright (c) 2000-2002 Joshua Keroes, Electric Lightwave Inc.
 All rights reserved. This program is free software; you
 can redistribute it and/or modify it under the same terms
 as Perl itself.

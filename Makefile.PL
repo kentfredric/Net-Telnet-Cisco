@@ -6,5 +6,6 @@ WriteMakefile(
     'VERSION_FROM'	=> 'Cisco.pm', # finds $VERSION
     'PREREQ_PM'		=> { Net::Telnet => 3.02,
 			     Term::ReadKey => 2,
+			     Test::More => undef,
 			   }, # e.g., Module::Name => 1.1
 );

@@ -1,4 +1,4 @@
-$Id: Changes,v 1.7 2002/01/09 18:29:38 jkeroes Exp $
+$Id: Changes,v 1.8 2002/01/14 17:45:31 jkeroes Exp $
 
 Revision history for Perl extension Net::Telnet::Cisco.
 
@@ -40,3 +40,7 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- New XTACACS/SecurID "PASSCODE: " prompt support
 	- Default cmd_prompt now anchored to beginning of line with (?m).
 	- New cmd_prompt, see docs.
+
+1.06  Mon Jan 14 09:42:20 PST 2002
+	- Turned on warnings, minor related changes
+	- Correctly return an error in waitfor()
