@@ -1,4 +1,4 @@
-$Id: Changes,v 1.2 2000/07/30 22:16:51 jkeroes Exp $
+$Id: Changes,v 1.7 2002/01/09 18:29:38 jkeroes Exp $
 
 Revision history for Perl extension Net::Telnet::Cisco.
 
@@ -26,3 +26,17 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- Improved default prompt:
 	  Old: /[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/'
 	  New:   /[\w().-]*[\$#>]\s?(?:\(enable\))?\s*$/
+
+1.04  Thu Jan 25 15:49:57 PST 2001
+	- Aaron Racine submitted a patch for a prompt bug in enable() 
+	- Private release
+
+1.05  Wed Aug  8 17:57:56 PDT 2001
+	- enable() accepts -Name, -Password, -Passcode, and -Level args
+	- All args to login() are optional, including -Name
+	- Reworked internals of login() and enable()
+	- New EXAMPLES docs
+	- New PIX firewall "PIX Passwd: " prompt support
+	- New XTACACS/SecurID "PASSCODE: " prompt support
+	- Default cmd_prompt now anchored to beginning of line with (?m).
+	- New cmd_prompt, see docs.

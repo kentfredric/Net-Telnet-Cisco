@@ -1,140 +1,145 @@
-# $Id: test.pl,v 1.2 2000/07/30 20:54:20 jkeroes Exp $
+# $Id: test.pl,v 1.11 2002/01/10 20:45:51 jkeroes Exp $
 #
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
-######################### We start with some black magic to print on failure.
-
-# Change 1..1 below to 1..last_test_to_print .
-# (It may become useful if the test is moved to ./t subdirectory.)
-
-BEGIN { $| = 1; print "1..5\n"; }
-END {print "not ok 1\n" unless $loaded;}
-use Net::Telnet::Cisco;
-$loaded = 1;
-print "ok 1\n";
-
-######################### End of black magic.
+use Test::More tests => 24;
 
 use Term::ReadKey;
-$^W = 1;
 
-use constant PASS	  =>  1;
-use constant FAIL	  =>  0;
-use constant SKIP	  => -1;
-use constant WEIRD_PASS	  => -2;
+use vars qw/$ROUTER $PASSWD $LOGIN $S $EN_PASS $PASSCODE/;
 
-use vars qw/$ROUTER $PASSWD $LOGIN $SESSION/;
+my $input_log = "input.log";
+my $dump_log  = "dump.log";
 
-my $i      = 1;
-my $badbad = 0;
+#------------------------------------------------------------
+# tests
+#------------------------------------------------------------
 
-foreach my $cref ( qw(t2 t3 t4 t5 t6) ) {
+get_login();
 
-    if ( ++$i >= 3 and not $SESSION ) {
-	print "not ok $i\n";
-	next;
-    }
+BEGIN { use_ok("Net::Telnet::Cisco") }
 
-    my $ret = $cref->();
+ok($Net::Telnet::Cisco::VERSION, 	"\$VERSION set");
 
-    if ( $ret == PASS ) {
-	print "ok $i\n";
-    } elsif ( $ret == FAIL or not defined $ret ) {
-	print "not ok $i\n";
-	$badbad = 1;
-    } elsif ( $ret == SKIP ) {
-	print "skipped $i\n";
-    } elsif ( $ret == WEIRD_PASS ) {
-	print "unexpected success $i\n";
-    } else {
-	die "test.pl may be broken. Bailing out.\n";
-    }
+SKIP: {
+    skip("Won't login to router without a login and password.", 19)
+	unless $LOGIN && $PASSWD;
+
+    ok( $S = Net::Telnet::Cisco->new( Errmode	 => 'return',	
+				      Host	 => $ROUTER,
+				      Input_log  => $input_log,
+				      Dump_log   => $dump_log,
+				    ),  "new() object" );
+    ok( $S->login(-Name     => $LOGIN,
+		  -Password => $PASSWD,
+		  -Passcode => $PASSCODE), "login()"		);
+    ok( $S->print('terminal length 0'),	"print() (unset paging)");
+    ok( $S->waitfor($S->prompt),	"waitfor() prompt"	);
+    ok( $S->cmd('show clock'),		"cmd() short"		);
+    ok( $S->cmd('show ver'),		"cmd() medium"		);
+    ok( $S->cmd('show run'),		"cmd() long"		);
+
+    # $seen should be incrememnted to 1.
+    my $seen;
+    ok( $S->errmode(sub {$seen++}), 	"set errmode(CODEREF)"	);
+    $S->cmd(  "Small_Change_got_rained_on_with_his_own_thirty_eight"
+	    . "_And_nobody_flinched_down_by_the_arcade");
+    ok( $seen,				"error() called"	);
+
+    # $seen should not have been incremented.
+    ok( $S->errmode('return'),		"no errmode()"		);
+    $S->cmd(  "Brother_my_cup_is_empty_"
+	    . "And_I_havent_got_a_penny_"
+	    . "For_to_buy_no_more_whiskey_"
+	    . "I_have_to_go_home");
+    ok( $seen == 1,			"don't call error()" );
+
+    ok( $S->always_waitfor_prompt(1),	"always_waitfor_prompt()" );
+    ok( $S->print("show clock")
+	&& $S->waitfor("/not_a_real_prompt/"),
+					"waitfor() autochecks for prompt()" );
+    ok( $S->always_waitfor_prompt(0) == 0, "don't always_waitfor_prompt()" );
+    ok( $S->timeout(5),			"set timeout to 5 seconds" );
+    ok( $S->print("show clock")
+	&& $S->waitfor("/not_a_real_prompt/")
+	&& $S->timed_out,		"waitfor() timeout" );
+
+    ok ($S->cmd("show clock"),		"cmd() after waitfor()" );
+
+    # log checks
+    ok( -e $input_log, 			"input_log() created"	);
+    ok( -e $dump_log, 			"dump_log() created"	);
 }
 
-$SESSION and $SESSION->close;
+# $S->errmode('die');
+# $S->timeout(30);
+# $S->always_waitfor_prompt(1);
 
-if ( $badbad ) {
-    warn "test.pl experienced some problems. See test.log for details.\n";
-} elsif ( -e "test.log" ) {
-    unlink "test.log" or warn "Can't remove test.log: $!";
+SKIP: {
+    skip("Won't enter enabled mode without an enable password", 3)
+	unless $LOGIN && $PASSWD && $EN_PASS;
+    ok( $S->disable,			"disable()"		);
+    ok( $S->enable($EN_PASS),		"enable()"		);
+    ok( $S->is_enabled,			"is_enabled()"		);
 }
 
-exit 0;
+#------------------------------------------------------------
+# subs
+#------------------------------------------------------------
 
-#------------------------------
-# tests.
-#------------------------------
-
-sub t2 {
+sub get_login {
     print <<EOB;
 
 Net::Telnet::Cisco needs to log into a router to
-perform it\'s full set to tests. To log in, we
-need a test router, a login, and a password. To
-skip these tests, hit "return" at any point.
+perform it\'s full suite of tests. To log in, we
+need a test router, a login, a password, an
+optional enable password, and an optional
+SecurID/TACACS PASSCODE.
+
+To skip these tests, hit "return".
 
 EOB
-
-    print "\Router: ";
+    print "\Router: " unless $ROUTER;
     $ROUTER ||= <STDIN>;
     chomp $ROUTER;
-    return SKIP unless $ROUTER;
+    return unless $ROUTER;
 
-    print "Login: ";
+    print "Login: " unless $LOGIN;
     $LOGIN ||= <STDIN>;
     chomp $LOGIN;
-    return SKIP unless $LOGIN;
+    return unless $LOGIN;
 
-    print "Passwd: ";
+    print "Passwd: " unless $PASSWD;
 
     if ( $Term::ReadKey::VERSION ) {
 	ReadMode( 'noecho' );
 	$PASSWD ||= ReadLine(0);
 	chomp $PASSWD;
 	ReadMode( 'normal' );
-	print "\n";
     } else {
 	$PASSWD = <STDIN>;
 	chomp $PASSWD;
     }
+    print "\n";
 
-    return SKIP unless $PASSWD;
+    return unless $PASSWD;
 
-    $SESSION = Net::Telnet::Cisco->new( Errmode	   => 'return',	
-					Host	   => $ROUTER,
-					Timeout	   => 45,
-					Input_log  => 'test.log',
-				      ) or return FAIL;
+    print "Enable Passwd [optional] : " unless $EN_PASS;
 
-    my $ok = $SESSION->login( $LOGIN, $PASSWD );
-    unless ( $ok ) {
-	warn "Can't login to router with your login and pass.\n";
-	return FAIL;
+    if ( $Term::ReadKey::VERSION ) {
+	ReadMode( 'noecho' );
+	$EN_PASS ||= ReadLine(0);
+	chomp $EN_PASS;
+	ReadMode( 'normal' );
+	print "\n";
+    } else {
+	$EN_PASS = <STDIN>;
+	chomp $EN_PASS;
     }
-    return PASS;
-}
+    print "SecurID/TACACS PASSCODE [optional] : " unless $PASSCODE;
+    $PASSCODE ||= <STDIN>;
+    chomp $PASSCODE;
+    print "\n";
 
-sub t3 {
-    my @out = $SESSION->cmd( 'terminal length 0' );
-    return $SESSION->errmsg ? FAIL : PASS;
-}
-
-sub t4 {
-    $SESSION->errmsg('');	# reset errmsg to noerr.
-    my @out = $SESSION->cmd( 'show users' );
-    return FAIL if $SESSION->errmsg;
-    return @out ? PASS : FAIL;
-}
-
-sub t5 {
-    my $success = undef;
-    $SESSION->errmode( sub { $success = 1 } );
-    my @out = $SESSION->cmd( 'asdmnbvzvctoiubqwerhgadfhg' );
-    return $success ? PASS : FAIL;
-}
-
-sub t6 {
-    my $ok = $SESSION->cmd( String => 'show privilege' );
-    return $ok ? PASS : FAIL;
 }
