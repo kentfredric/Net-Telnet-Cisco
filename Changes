@@ -1,8 +1,16 @@
-$Id: Changes,v 1.3 2000/07/14 18:13:16 jkeroes Exp $
+$Id: Changes,v 1.4 2000/07/25 00:05:17 jkeroes Exp $
 
 Revision history for Perl extension Net::Telnet::Cisco.
 
 1.0   Fri Jul 14 11:11:42 PDT 2000 
 	- Initial release
 
+1.01  Fri Jul 14 15:07:00 PDT 2000
+	- Fixed CPAN installation issues
 
+1.02  Mon Jul 24 16:22:11 PDT 2000
+	- enable() enables.
+	- Simplified disable().
+	- prompt() and is_enabled() handle prompts with '(enable)' in them.
+	- Added Windows installation tips to INSTALL.
+	- test.pl keeps a log (test.log) of the session if there were errors.

@@ -4,7 +4,7 @@ package Net::Telnet::Cisco;
 #
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.8 2000/07/14 18:13:16 jkeroes Exp $
+# $Id: Cisco.pm,v 1.10 2000/07/25 00:05:17 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
@@ -20,7 +20,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.0';
+$VERSION  = '1.02';
 
 #------------------------------
 # New Methods
@@ -29,28 +29,35 @@ $VERSION  = '1.0';
 # Tries to enter enabled mode with the password arg.
 sub enable {
     my ($self, $en_pass) = @_;
-
     return $self->error( "Can't enable without a password" )
         unless defined $en_pass;
 
+    # Store the old prompt without the //s around it.
+    my $old_prompt = $self->prompt;
+    $old_prompt =~ s|^/||;
+    $old_prompt =~ s|/$||;
+
     unless ( $self->is_enabled ) {
-	my @output = $self->cmd( 'enable' );
-	if ( $self->last_prompt !~ /\#/ ) {
-	    return $self->error( 'Failed to enter enabled mode' );
+	# Store the old prompt here. If the user doesn't
+	# have enough access to run the 'enable' command, the
+	# device won't even query for a password, it will just
+	# ignore the command and display another [boring] prompt.
+	$self->prompt( '/^password[: ]*$|$old_prompt/' );
+	my $ok = $self->cmd( 'enable' );
+	if ( $self->last_prompt =~ /[Pp]ass/ ) {
+	    $ok = $self->cmd( $en_pass );
 	}
     }
-    return 1;
+    $self->prompt("/$old_prompt/"); # Restore old prompt;
+
+    return $self->is_enabled ? 1 : $self->error('Failed to enter enabled mode');
 }
 
 # Leave enabled mode.
 sub disable {
     my $self	= shift;
-    my @output	= $self->cmd( 'disable' );
-
-    if ( $self->last_prompt =~ /\#/ ) {
-	return $self->error( 'Failed to exit enabled mode' );
-    }
-    return 1;
+    my $ok	= $self->cmd( 'disable' );
+    return $self->is_enabled ? $self->error('Failed to exit enabled mode') : 1;
 }
 
 # Displays the last prompt.
@@ -79,12 +86,13 @@ sub is_enabled { $_[0]->last_prompt =~ /\#|enable/ ? 1 : undef }
 #------------------------------------------
 
 sub new {
-    my ( $class ) = shift;
+    my $class = shift;
 
     # There's a new cmd_prompt in town.
-    my $self = $class->SUPER::new( prompt => '/[\w\(\)\.-]*[\$#>]$/',
-				   @_, # user's additional arguments
-				 ) or return;
+    my $self = $class->SUPER::new(
+       	prompt => '/[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/',
+	@_,			# user's additional arguments
+    ) or return;
 
     *$self->{net_telnet_cisco} = {
 	last_prompt => '',
@@ -141,7 +149,7 @@ sub prompt {
 # If an error message is found, the following error message
 # is sent to Net::Telnet's error()-handler:
 #
-#   Router error and last command:
+#   Last command and router error:
 #   <last command prompt> <last command>
 #   <error message fills remaining lines>
 
@@ -452,8 +460,8 @@ for dealing with Cisco routers.
 
 Things you should know:
 
-The default cmd_prompt is /[\w\(\)\.-]*[\$#>]$/, suitable for
-matching 'rtrname#'.
+The default cmd_prompt is /[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/, suitable for
+matching promtps like 'rtrname$ ', 'rtrname# ', and 'rtrname> (enable) '.
 
 cmd() parses router-generated error messages - the kind that
 begin with a '%' - and stows them in $obj->errmsg(), so that
@@ -512,7 +520,7 @@ log into a router if the session begins with a password prompt
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2000/07/14 18:13:16 $
+Joshua_Keroes@eli.net $Date: 2000/07/25 00:05:17 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.

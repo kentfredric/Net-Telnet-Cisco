@@ -1,4 +1,4 @@
-# $Id: test.pl,v 1.4 2000/06/19 21:42:56 jkeroes Exp $
+# $Id: test.pl,v 1.5 2000/07/25 00:05:17 jkeroes Exp $
 #
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
@@ -26,7 +26,8 @@ use constant WEIRD_PASS	  => -2;
 
 use vars qw/$ROUTER $PASSWD $LOGIN $SESSION/;
 
-my $i = 1;
+my $i      = 1;
+my $badbad = 0;
 
 foreach my $cref ( qw(t2 t3 t4 t5) ) {
 
@@ -41,6 +42,7 @@ foreach my $cref ( qw(t2 t3 t4 t5) ) {
 	print "ok $i\n";
     } elsif ( $ret == FAIL or not defined $ret ) {
 	print "not ok $i\n";
+	$badbad = 1;
     } elsif ( $ret == SKIP ) {
 	print "skipped $i\n";
     } elsif ( $ret == WEIRD_PASS ) {
@@ -51,6 +53,13 @@ foreach my $cref ( qw(t2 t3 t4 t5) ) {
 }
 
 $SESSION and $SESSION->close;
+
+if ( $badbad ) {
+    warn "test.pl experienced some problems. See test.log for details.\n";
+} elsif ( -e "test.log" ) {
+    unlink "test.log" or warn "Can't remove test.log: $!";
+}
+
 exit 0;
 
 #------------------------------
@@ -92,8 +101,10 @@ EOB
 
     return SKIP unless $PASSWD;
 
-    $SESSION = Net::Telnet::Cisco->new( Errmode => 'return',	
-					Host => $ROUTER,
+    $SESSION = Net::Telnet::Cisco->new( Errmode	   => 'return',	
+					Host	   => $ROUTER,
+					Timeout	   => 45,
+					Input_log  => 'test.log',
 				      ) or return FAIL;
 
     my $ok = $SESSION->login( $LOGIN, $PASSWD );

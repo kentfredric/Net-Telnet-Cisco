@@ -4,23 +4,76 @@ INSTALL
 
 1.1 Prerequisites
 
-	Net::Telnet 3.02
+	+ Net::Telnet 3.02
+
+	------------------------------
+
+	Windows machines need some additional modules to make PPM 
+	(the Perl Package Manager) work correctly:
+
+	+ nmake
+	ftp://ftp.microsoft.com/Softlib/MSLFILES/nmake15.exe
+
+	+ Compress::Tar
+	ftp://ftp.cpan.org/CPAN/authors/id/SRZ/Archive-Tar-0.22.tar.gz
+
+	+ Compress::Zlib
+	ftp://ftp.cpan.org/CPAN/authors/id/PMQS/Compress-Zlib-1.08.tar.gz
+
+	+ PPM
+	PPM is installed when you install ActivePerl.
+		
+	For more information, read the PPM FAQ:
+	http://www.activestate.com/Products/ActivePerl/docs/faq/ActivePerl-faq2.html
+
+------------------------------------------------------------
 
 1.2 Make and install
+
+1.2.1 UNIX
+
+	If you've never used CPAN before, set it up:
+
+	$ perl -MCPAN -e shell
+	# ...and follow the instructions. When done, type:
+	cpan> install Net::Telnet::Cisco
+
+	------------------------------
+
+	If you've used the CPAN module in the past, it's easier:
+
+	$ perl -MCPAN -e 'install Net::Telnet::Cisco'
+
+	------------------------------
+
+	Failing those, download the module and install by hand:
 
 	$ perl Makefile.PL [--prefix=...]
 	$ make
 	$ make test
 	$ make install
 
-	Or be lazy and let the CPAN module to do it for you:
-	$ perl -MCPAN -e 'install Net::Telnet::Cisco'
+1.2.2 Windows
+
+	I, uh, don't have a Windows machine so this may or may not work.
+	:-) First, make sure you have the software listed in section 1.1 
+	installed. Next, use PPM to download and install Net::Telnet::Cisco. 
+	The FAQ listed in section 1.1 may be able to help you; I certainly 
+	can't.
+
+	Kindly email me if you can provide instructions on accomplishing this.
+	Thanks.
+
+1.2.3 MacOS
+
+	*blink blink* uhhhhh. I own no Mac either. Can someone help me with
+	this section too?
 
 1.3 Troubleshooting
 
 	Email joshua_keroes@eli.net if you have difficulties.
-	Please include a script(1) typescript of the 
-	installation problems.
 
-$Id: INSTALL,v 1.1 2000/07/14 18:13:16 jkeroes Exp $
+	Please include a script(1) typescript of the installation problems.
+
+$Id: INSTALL,v 1.2 2000/07/24 23:20:13 jkeroes Exp $
 __END__

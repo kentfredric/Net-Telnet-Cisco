@@ -35,8 +35,9 @@ DESCRIPTION
 
     Things you should know:
 
-    The default cmd_prompt is /[\w\(\)\.-]*[\$#>]$/, suitable for matching
-    'rtrname#'.
+    The default cmd_prompt is /[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/,
+    suitable for matching promtps like 'rtrname$ ', 'rtrname# ', and
+    'rtrname> (enable) '.
 
     cmd() parses router-generated error messages - the kind that begin with
     a '%' - and stows them in $obj->errmsg(), so that errmode can be used to
@@ -84,7 +85,7 @@ METHODS
         ignores the login or username step entirely).
 
 AUTHOR
-    Joshua_Keroes@eli.net $Date: 2000/07/14 18:13:16 $
+    Joshua_Keroes@eli.net $Date: 2000/07/25 00:05:17 $
 
     It would greatly amuse the author if you would send email to him and
     tell him how you are using Net::Telnet::Cisco.
