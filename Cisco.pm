@@ -3,7 +3,7 @@ package Net::Telnet::Cisco;
 #-----------------------------------------------------------------
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.31 2002/01/14 17:29:10 jkeroes Exp $
+# $Id: Cisco.pm,v 1.32 2002/01/15 20:33:30 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
@@ -19,7 +19,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.06';
+$VERSION  = '1.07';
 $^W       = 1;
 
 #------------------------------
@@ -64,7 +64,7 @@ sub enable {
 		($lastline = $self->lastline) =~ s/\n+//;
 		return $self->error($errmsg, ": ", $lastline);
 	    } else {
-		return $self->error($self->errmsg);
+		return $self->error($errmsg);
 	    }
 	};
 
@@ -863,7 +863,7 @@ L<RATE<sol>NCAT project http:E<sol>E<sol>ncat.sourceforge.netE<sol>>
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2002/01/14 17:29:10 $
+Joshua_Keroes@eli.net $Date: 2002/01/15 20:33:30 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.
@@ -876,7 +876,7 @@ help manage over 10,000 machines! Keep the email rolling in!
 The following people understand what Open Source Software is all
 about. Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony
 Mueller, Frank Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen,
-Niels van Dijke, Kevin der Kinderen, and Ian Batterbee.
+Niels van Dijke, Kevin der Kinderen, Ian Batterbee, and Leonardo Cont.
 
 Institutions: infobot.org #perl, perlmonks.org, the geeks at
 geekhouse.org, and eli.net.
