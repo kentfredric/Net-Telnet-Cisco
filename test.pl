@@ -1,10 +1,10 @@
-# $Id: test.pl,v 1.11 2002/01/10 20:45:51 jkeroes Exp $
+# $Id: test.pl,v 1.13 2002/01/30 23:13:50 jkeroes Exp $
 #
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
-use Test::More tests => 24;
-
+use Test::More tests => 30;
+#use Test::More qw/no_plan/;
 use Term::ReadKey;
 
 use vars qw/$ROUTER $PASSWD $LOGIN $S $EN_PASS $PASSCODE/;
@@ -22,32 +22,61 @@ BEGIN { use_ok("Net::Telnet::Cisco") }
 
 ok($Net::Telnet::Cisco::VERSION, 	"\$VERSION set");
 
+use Carp;
+
 SKIP: {
     skip("Won't login to router without a login and password.", 19)
 	unless $LOGIN && $PASSWD;
 
-    ok( $S = Net::Telnet::Cisco->new( Errmode	 => 'return',	
+    ok( $S = Net::Telnet::Cisco->new( Errmode	 => \&fail,
 				      Host	 => $ROUTER,
 				      Input_log  => $input_log,
 				      Dump_log   => $dump_log,
 				    ),  "new() object" );
+
+    $S->errmode(sub {&confess});
     ok( $S->login(-Name     => $LOGIN,
 		  -Password => $PASSWD,
 		  -Passcode => $PASSCODE), "login()"		);
+
+    # Autopaging tests
+    ok( $S->autopage,			"autopage() on"		);
+    my @out = $S->cmd('show ver');
+    ok( $out[-1] !~ /--More--/, 	"autopage() last line"	);
+    ok( $S->last_prompt !~ /--More--/,	"autopage() last prompt" );
+
+
+    # Turn off autopaging. We should timeout with a More prompt
+    # on the last line.
+    ok( $S->autopage(0) == 0,		"autopage() off"	);
+
+    $S->errmode('return');	# Turn off error handling.
+    $S->errmsg('');		# We *want* this to timeout.
+
+    $S->cmd(-String => 'show run', -Timeout => 5);
+    ok( $S->errmsg =~ /timed-out/,	"autopage() not called" );
+
+    $S->errmode(\&fail);	# Restore error handling.
+    $S->cmd("\cZ");		# Cancel out of the "show run"
+
+    # Print variants
     ok( $S->print('terminal length 0'),	"print() (unset paging)");
     ok( $S->waitfor($S->prompt),	"waitfor() prompt"	);
     ok( $S->cmd('show clock'),		"cmd() short"		);
     ok( $S->cmd('show ver'),		"cmd() medium"		);
     ok( $S->cmd('show run'),		"cmd() long"		);
 
-    # $seen should be incrememnted to 1.
+
+    # Error handling
     my $seen;
     ok( $S->errmode(sub {$seen++}), 	"set errmode(CODEREF)"	);
     $S->cmd(  "Small_Change_got_rained_on_with_his_own_thirty_eight"
 	    . "_And_nobody_flinched_down_by_the_arcade");
+
+    # $seen should be incrememnted to 1.
     ok( $seen,				"error() called"	);
 
-    # $seen should not have been incremented.
+    # $seen should not be incremented (it should remain 1)
     ok( $S->errmode('return'),		"no errmode()"		);
     $S->cmd(  "Brother_my_cup_is_empty_"
 	    . "And_I_havent_got_a_penny_"
@@ -63,18 +92,19 @@ SKIP: {
     ok( $S->timeout(5),			"set timeout to 5 seconds" );
     ok( $S->print("show clock")
 	&& $S->waitfor("/not_a_real_prompt/")
-	&& $S->timed_out,		"waitfor() timeout" );
+	&& $S->timed_out,		"waitfor() timeout" 	);
 
+    # restore errmode to test default.
+    $S->errmode(sub {&fail});
     ok ($S->cmd("show clock"),		"cmd() after waitfor()" );
 
     # log checks
     ok( -e $input_log, 			"input_log() created"	);
     ok( -e $dump_log, 			"dump_log() created"	);
-}
 
-# $S->errmode('die');
-# $S->timeout(30);
-# $S->always_waitfor_prompt(1);
+    $S = Net::Telnet::Cisco->new( Prompt => "/broken_pre1.8/" 	);
+    ok( $S->prompt eq "/broken_pre1.8/", "new(args) bugfix"	);
+}
 
 SKIP: {
     skip("Won't enter enabled mode without an enable password", 3)
@@ -100,7 +130,7 @@ SecurID/TACACS PASSCODE.
 To skip these tests, hit "return".
 
 EOB
-    print "\Router: " unless $ROUTER;
+    print "Router: " unless $ROUTER;
     $ROUTER ||= <STDIN>;
     chomp $ROUTER;
     return unless $ROUTER;

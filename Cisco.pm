@@ -3,7 +3,7 @@ package Net::Telnet::Cisco;
 #-----------------------------------------------------------------
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.32 2002/01/15 20:33:30 jkeroes Exp $
+# $Id: Cisco.pm,v 1.35 2002/01/30 23:41:54 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
@@ -16,15 +16,401 @@ use Net::Telnet 3.02;
 use AutoLoader;
 use Carp;
 
-use vars qw($AUTOLOAD @ISA $VERSION);
+use vars qw($AUTOLOAD @ISA $VERSION $DEBUG);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.07';
+$VERSION  = 1.08;
 $^W       = 1;
+$DEBUG    = 0;
+$|++;
 
 #------------------------------
-# New Methods
+# Public Methods
 #------------------------------
+
+sub new {
+    my $class = shift;
+
+    my ($self, $host, %args);
+
+    # Add default prompt to args if none present.
+    push @_, (-Prompt =>
+        '/(?m:^[\w.-]+\s?(?:\(config[^\)]*\))?\s?[\$#>]\s?(?:\(enable\))?\s*$)/')
+	unless grep /^-?prompt$/i, @_;
+
+    # There's a new cmd_prompt in town.
+    $self = $class->SUPER::new(@_) or return;
+
+    *$self->{net_telnet_cisco} = {
+	last_prompt	       => '',
+        last_cmd	       => '',
+        always_waitfor_prompt  => 1,
+	waitfor_pause	       => 0.1,
+	autopage	       => 1,
+	more_prompt	       => '/(?m:^\s*--More--)/',
+    };
+
+    ## Parse the args.
+    if (@_ == 2) {  # one positional arg given
+        $host = $_[1];
+    } elsif (@_ > 2) {  # named args
+        ## Get the named args.
+        %args = @_;
+
+        ## Parse the errmode named arg first.
+        foreach (keys %args) {
+            $self->errmode($args{$_})
+                if /^-?errmode$/i;
+        }
+
+        ## Parse all other named args.
+        foreach (keys %args) {
+            if (/^-?always_waitfor_prompt$/i) {
+                $self->always_waitfor_prompt($args{$_});
+            }
+            elsif (/^-?waitfor_pause$/i) {
+                $self->waitfor_pause($args{$_});
+	    }
+            elsif (/^-?more_prompt$/i) {
+                $self->more_prompt($args{$_});
+	    }
+            elsif (/^-?autopage$/i) {
+                $self->autopage($args{$_});
+	    }
+	}
+    }
+
+    $self;
+} # end sub new
+
+
+# The new prompt() stores the last matched prompt for later
+# fun 'n amusement. You can access this string via $self->last_prompt.
+#
+# It also parses out any router errors and stores them in the
+# correct place, where they can be acccessed/handled by the
+# Net::Telnet error methods.
+#
+# No POD docs for prompt(); these changes should be transparent to
+# the end-user.
+sub prompt {
+    my( $self, $prompt ) = @_;
+    my( $prev, $stream );
+
+    $stream  = $ {*$self}{net_telnet_cisco};
+    $prev    = $self->SUPER::prompt;
+
+    ## Parse args.
+    if ( @_ == 2 ) {
+        defined $prompt or $prompt = '';
+	$self->_match_check($prompt);
+	$self->SUPER::prompt($prompt);
+    } elsif (@_ > 2) {
+        return $self->error('usage: $obj->prompt($match_op)');
+    }
+
+    return $prev;
+} # end sub prompt
+
+# cmd() now parses errors and sticks 'em where they belong.
+#
+# This is a routerish error:
+#   routereast#show asdf
+#                     ^
+#   % Invalid input detected at '^' marker.
+#
+# "show async" is valid, so the "d" of "asdf" raised an error.
+#
+# If an error message is found, the following error message
+# is sent to Net::Telnet's error()-handler:
+#
+#   Last command and router error:
+#   <last command prompt> <last command>
+#   <error message fills remaining lines>
+sub cmd {
+    my $self             = shift;
+    my $ok               = 1;
+
+    # Extract the command.
+    if (@_ == 1) {
+	$ {*$self}{net_telnet_cisco}{last_cmd} = $_[0];
+    } elsif ( @_ >= 2 ) {
+	my @args = @_;
+	while (my ($k, $v) = splice @args, 0, 2) {
+	    $ {*$self}{net_telnet_cisco}{last_cmd} = $v if $k =~ /^-?[Ss]tring$/;
+	}
+    }
+
+    my $cmd	   = $ {*$self}{net_telnet_cisco}{last_cmd};
+    my $old_ors	   = $self->output_record_separator;
+    my $need_more  = 0;
+    my @out;
+
+
+    while(1) {
+	# Send a space (with no newline) whenever we see a "More" prompt.
+	if ($need_more) {
+	    $self->output_record_separator('');
+	    push @out, $self->SUPER::cmd(" ");
+	} else {
+	    $self->output_record_separator($old_ors);
+	    push @out, $self->SUPER::cmd(@_);
+	}
+
+	for ( my ($i, $lastline) = (0, '');
+	      $i <= $#out;
+	      $lastline = $out[$i++] ) {
+
+	    # This may have to be a pattern match instead.
+	    if ( ( substr $out[$i], 0, 1 ) eq '%' ) {
+		if ( $out[$i] =~ /'\^' marker/ ) { # Typo & bad arg errors
+		    chomp $lastline;
+		    $self->error( join "\n",
+				  "Last command and router error: ",
+				  ( $self->last_prompt . $cmd ),
+				  $lastline,
+				  $out[$i],
+				);
+		    splice @out, $i - 1, 3;
+		} else { # All other errors.
+		    chomp $out[$i];
+		    $self->error( join "\n",
+				  "Last command and router error: ",
+				  ( $self->last_prompt . $cmd ),
+				  $out[$i],
+				);
+		    splice @out, $i, 2;
+		}
+		$ok = 0;
+		last;
+	    }
+	}
+
+	$self->output_record_separator($old_ors);
+
+	# redo the while loop if we saw a More prompt.
+	my $more_re = $self->re_sans_delims($self->more_prompt);
+	if ($self->autopage && $self->last_prompt =~ /$more_re/) {
+	    $need_more = 1;
+	} else {
+	    last;
+	}
+    }
+
+    return wantarray ? @out : $ok;
+}
+
+
+# waitfor now stores prompts to $obj->last_prompt()
+sub waitfor {
+    my $self = shift;
+
+    return unless @_;
+
+    # $all_prompts will be built into a regex that matches all currently
+    # valid prompts.
+    #
+    # -Match args will be added to this regex. The current prompt will
+    # be appended when all -Matches have been exhausted.
+    my $all_prompts = '';
+
+    # Literal string matches, passed in with -String.
+    my @literals = ();
+
+    # Parse the -Match => '/prompt \$' type options
+    # waitfor can accept more than one -Match argument, so we can't just
+    # hashify the args.
+    if (@_ >= 2) {
+	my @args = @_;
+	while ( my ($k, $v) = splice @args, 0, 2 ) {
+	    if ($k =~ /^-?[Ss]tring$/) {
+		push @literals, $v;
+	    } elsif ($k =~ /^-?[Mm]atch$/) {
+		$all_prompts = $self->prompt_append($all_prompts, $v);
+	    }
+	}
+    } elsif (@_ == 1) {
+	# A single argument is always a -match.
+	$all_prompts = $self->prompt_append($all_prompts, $_[0]);
+    }
+
+    my $all_re	   = $self->re_sans_delims($all_prompts);
+    my $prompt_re  = $self->re_sans_delims($self->prompt);
+    my $more_re    = $self->re_sans_delims($self->more_prompt);
+
+
+    # Add the current prompt if it's not already there. You can turn this behavior
+    # off by setting always_waitfor_prompt to a false value.
+    if ($self->always_waitfor_prompt && index($all_re, $prompt_re) == -1) {
+	unshift @_, "-Match" if @_ == 1;
+	push @_, (-Match => $self->prompt);
+
+	$all_prompts  = $self->prompt_append($all_prompts, $self->prompt);
+	$all_re	      = $self->re_sans_delims($all_prompts);
+    }
+
+    # Add the more prompt if it's not present. See the autopage() docs
+    # to turn this behaviour off.
+    if ($self->autopage && index($all_re, $more_re) == -1) {
+	unshift @_, "-Match" if @_ == 1;
+	push @_, (-Match => $self->more_prompt);
+
+	$all_prompts  = $self->prompt_append($all_prompts, $self->more_prompt);
+	$all_re	      = $self->re_sans_delims($all_prompts);
+    }
+
+    return $self->error("Godot ain't home - waitfor() isn't waiting for anything.")
+	unless $all_prompts || @literals;
+
+    # There's a timing issue that I can't quite figure out.
+    # Adding a small pause here seems to make it go away.
+    select undef, undef, undef, $self->waitfor_pause;
+
+    my ($prematch, $match) = $self->SUPER::waitfor(@_);
+
+    # If waitfor saw a prompt then store it.
+    if ($match) {
+	for (@literals) {
+	    if (index $match, $_) {
+		return wantarray ? ($prematch, $match) : 1;
+	    }
+	}
+
+	if ($match =~ /($all_re)/m ) {
+	    $ {*$self}{net_telnet_cisco}{last_prompt} = $1;
+	    return wantarray ? ($prematch, $match) : 1;
+	}
+    }
+    return wantarray ? ( $prematch, $match ) : 1;
+}
+
+
+sub login {
+    my($self) = @_;
+    my(
+       $cmd_prompt,
+       $endtime,
+       $error,
+       $lastline,
+       $match,
+       $orig_errmode,
+       $orig_timeout,
+       $prematch,
+       $reset,
+       $timeout,
+       $usage,
+       );
+    my ($username, $password, $passcode, $level) = ('','','','');
+    my (%args, %seen);
+
+    local $_;
+
+    ## Init vars.
+    $timeout = $self->timeout;
+    $self->timed_out('');
+    return if $self->eof;
+    $cmd_prompt = $self->prompt;
+
+    print "login:\t[orig: $cmd_prompt]\n" if $DEBUG;
+
+    $usage = 'usage: $obj->login([Name => $name,] [Password => $password,] '
+	   . '[Passcode => $passcode,] [Prompt => $matchop,] [Timeout => $secs,])';
+
+    if (@_ == 3) {  # just username and passwd given
+	($username, $password) = (@_[1,2]);
+    }
+    else {  # named args given
+	## Get the named args.
+	(undef, %args) = @_;
+
+	## Parse the named args.
+	foreach (keys %args) {
+	    if (/^-?name$/i) {
+		$username    = $args{$_};
+	    } elsif (/^-?passw/i) {
+		$password    = $args{$_};
+	    } elsif (/^-?passcode/i) {
+		$passcode    = $args{$_};
+	    } elsif (/^-?prompt$/i) {
+		# login() always looks for a cmd_prompt. This is not
+		# controllable via always_waitfor_prompt().
+		$cmd_prompt = $self->prompt_append($cmd_prompt, $args{$_});
+	    } elsif (/^-?timeout$/i) {
+		$timeout = _parse_timeout($args{$_});
+	    } else {
+		return $self->error($usage);
+	    }
+	}
+    }
+
+    print "login:\t[after args: $cmd_prompt]\n" if $DEBUG;
+
+    ## Override these user set-able values.
+    $endtime	  = _endtime($timeout);
+    $orig_timeout = $self->timeout($endtime);
+    $orig_errmode = $self->errmode;
+
+    ## Create a subroutine to reset to original values.
+    $reset
+	= sub {
+	    $self->errmode($orig_errmode);
+	    $self->timeout($orig_timeout);
+	    1;
+	};
+
+    ## Create a subroutine to generate an error for user.
+    $error
+	= sub {
+	    my($errmsg) = @_;
+
+	    &$reset;
+	    if ($self->timed_out) {
+		return $self->error($errmsg);
+	    } elsif ($self->eof) {
+		($lastline = $self->lastline) =~ s/\n+//;
+		return $self->error($errmsg, ": ", $lastline);
+	    } else {
+		return $self->error($self->errmsg);
+	    }
+	};
+
+    while (1) {
+	(undef, $_) = $self->waitfor(
+		-match => '/(?:[Ll]ogin|[Uu]sername|[Pp]assw(?:or)?d)[:\s]*$/',
+		-match => '/(?i:Passcode)[:\s]*$/',
+		-match => $cmd_prompt,
+	);
+
+	unless ($_) {
+	    return &$error("read eof waiting for login or password prompt")
+		if $self->eof;
+	    return &$error("timed-out during login process");
+	}
+
+	my $cmd_prompt_re = $self->re_sans_delims($cmd_prompt);
+
+	if (not defined) {
+	    return $self->error("login failed: access denied or bad name, passwd, etc");
+	} elsif (/sername|ogin/) {
+	    $self->print($username) or return &$error("login disconnected");
+	    $seen{login}++ && $self->error("login failed: access denied or bad username");
+	} elsif (/[Pp]assw/) {
+	    $self->print($password) or return &$error("login disconnected");
+	    $seen{passwd}++ && $self->error("login failed: access denied or bad password");
+	} elsif (/(?i:Passcode)/) {
+	    $self->print($passcode) or return &$error("login disconnected");
+	    $seen{passcode}++ && $self->error("login failed: access denied or bad passcode");
+	} elsif (/($cmd_prompt_re)/) {
+	    &$reset; # Success. Reset obj to default vals before continuing.
+	    last;
+	} else {
+	    $self->error("login received unexpected prompt. Aborting.");
+	}
+    }
+
+    1;
+} # end sub login
+
 
 # Tries to enter enabled mode with the password arg.
 sub enable {
@@ -69,7 +455,8 @@ sub enable {
 	};
 
     # Store the old prompt without the //s around it.
-    my ($old_prompt) = re_sans_delims($self->prompt);
+    my ($old_prompt) = $self->re_sans_delims($self->prompt);
+
     # We need to expect either a Password prompt or a
     # typical prompt. If the user doesn't have enough
     # access to run the 'enable' command, the device
@@ -168,379 +555,106 @@ sub waitfor_pause {
     return $stream->{waitfor_pause};
 }
 
-#------------------------------------------
-# Overridden Methods
-#------------------------------------------
-
-sub new {
-    my $class = shift;
-
-    # There's a new cmd_prompt in town.
-    my $self = $class->SUPER::new(
-	prompt => '/(?m:^[\w.-]+\s?(?:\(config[^\)]*\))?\s?[\$#>]\s?(?:\(enable\))?\s*$)/',
-	@_,			# user's additional arguments
-    ) or return;
-
-    *$self->{net_telnet_cisco} = {
-	last_prompt => '',
-        last_cmd    => '',
-#	more_prompt => '/^--More--\s*/', # placeholder
-#	need_more   => 0, # placeholder
-        always_waitfor_prompt => 1,
-	waitfor_pause => .1,
-    };
-
-    $self;
-} # end sub new
-
-
-# The new prompt() stores the last matched prompt for later
-# fun 'n amusement. You can access this string via $self->last_prompt.
-#
-# It also parses out any router errors and stores them in the
-# correct place, where they can be acccessed/handled by the
-# Net::Telnet error methods.
-#
-# No POD docs for prompt(); these changes should be transparent to
-# the end-user.
-sub prompt {
-    my( $self, $prompt ) = @_;
-    my( $prev, $stream );
-
-    $stream  = $ {*$self}{net_telnet_cisco};
-    $prev    = $self->SUPER::prompt;
-
-    ## Parse args.
-    if ( @_ == 2 ) {
-        defined $prompt or $prompt = '';
-
-        return $self->error('bad match operator: ',
-                            "opening delimiter missing: $prompt")
-            unless $prompt =~ m|^\s*/|;
-
-	$self->SUPER::prompt($prompt);
-
-    } elsif (@_ > 2) {
-        return $self->error('usage: $obj->prompt($match_op)');
-    }
-
-    return $prev;
-} # end sub prompt
-
-# cmd() now parses errors and sticks 'em where they belong.
-#
-# This is a routerish error:
-#   routereast#show asdf
-#                     ^
-#   % Invalid input detected at '^' marker.
-#
-# "show async" is valid, so the "d" of "asdf" raised an error.
-#
-# If an error message is found, the following error message
-# is sent to Net::Telnet's error()-handler:
-#
-#   Last command and router error:
-#   <last command prompt> <last command>
-#   <error message fills remaining lines>
-sub cmd {
-    my $self             = shift;
-    my $ok               = 1;
-
-    # Extract the command.
-    if (@_ == 1) {
-	$ {*$self}{net_telnet_cisco}{last_cmd} = $_[0];
-    } elsif ( @_ >= 2 ) {
-	my @args = @_;
-	while (my ($k, $v) = splice @args, 0, 2) {
-	    $ {*$self}{net_telnet_cisco}{last_cmd} = $v if $k =~ /^-?[Ss]tring$/;
-	}
-    }
-
-    my $cmd   = $ {*$self}{net_telnet_cisco}{last_cmd};
-
-# placeholder
-#    # Add the more_prompt to the cmd_prompt;
-#    my $more_re = re_sans_delims( $ {*$self}{net_telnet_cisco}{more_prompt} );
-#    my $prompt_re = re_sans_delims( $ {*$self}{net_telnet_cisco}{cmd_prompt} );
-#    local $ {*$self}{net_telnet_cisco}{cmd_prompt} = "/$prompt_re|$more_re/";
-
-
-    my @out = $self->SUPER::cmd(@_);
-
-
-    for ( my ($i, $lastline) = (0, '');
-	  $i <= $#out;
-	  $lastline = $out[$i++] ) {
-
-	# This may have to be a pattern match instead.
-	if ( ( substr $out[$i], 0, 1 ) eq '%' ) {
-
-	    if ( $out[$i] =~ /'\^' marker/ ) { # Typo & bad arg errors
-		chomp $lastline;
-		$self->error( join "\n",
-			             "Last command and router error: ",
-			             ( $self->last_prompt . $cmd ),
-			             $lastline,
-			             $out[$i],
-			    );
-		splice @out, $i - 1, 3;
-
-	    } else { # All other errors.
-		chomp $out[$i];
-		$self->error( join "\n",
-			      "Last command and router error: ",
-			      ( $self->last_prompt . $cmd ),
-			      $out[$i],
-			    );
-		splice @out, $i, 2;
-	    }
-
-	    $ok = 0;
-	    last;
-	}
-    }
-
-# placeholder
-#    while( $ {*$self}{net_telnet_cisco}{need_more} ) {
-#	(my $block_ok, @block) = $self->_cmd(@_);
-#	push @out, @block;
-#
-#	# Only want the Bad News.
-#	$ok = $block_ok if $ok;
-#    }
-
-    return wantarray ? @out : $ok;
+# Typical get/set method.
+sub autopage {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    $stream->{autopage} = $arg if defined $arg;
+    return $stream->{autopage};
 }
 
-
-# waitfor now stores prompts to $obj->last_prompt()
-sub waitfor {
-    my $self = shift;
-    return unless @_;
-
-    # $all_prompts will be built into a regex that matches all currently
-    # valid prompts.
-    #
-    # -Match args will be added to this regex. The current prompt will
-    # be appended when all -Matches have been exhausted.
-    my $all_prompts = '';
-
-    # Literal string matches, passed in with -String.
-    my @literals = ();
-
-    # Parse the -Match => '/prompt \$' type options
-    # waitfor can accept more than one -Match argument, so we can't just
-    # hashify the args.
-    if (@_ >= 2) {
-	my @args = @_;
-	while ( my ( $k, $v ) = splice @args, 0, 2 ) {
-	    if ($k =~ /^-?[Ss]tring$/) {
-		push @literals, $v;
-	    } elsif ($k =~ /^-?[Mm]atch$/) {
-		$all_prompts = prompt_append($all_prompts, $v)
-		    or $self->error("bad prompt passed to waitfor: '$_[0]'");
-	    }
-	}
-
-    } elsif (@_ == 1) {
-	# A single argument is always a -match.
-	$all_prompts = prompt_append($all_prompts, $_[0])
-	    or $self->error("bad prompt passed to waitfor: '$_[0]'");
+# Get/set the More prompt
+sub more_prompt {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    if (defined $arg) {
+	$self->_match_check($arg);
+        $stream->{more_prompt} = $arg;
     }
-
-    # Add the current prompt if it's not already there. You can turn this behavior
-    # off by setting always_waitfor_prompt to a false value.
-    if ($ {*$self}{net_telnet_cisco}{always_waitfor_prompt}
-	&& $self->prompt =~ /$all_prompts/) {
-
-	$all_prompts = prompt_append($all_prompts, $self->prompt)
-	    or $self->error("waitfor can't autoadd prompt. Something's very broken.");
-    }
-
-    return $self->error("Godot ain't home - waitfor() isn't waiting for anything.")
-	unless $all_prompts || @literals;
-
-    # There's a timing issue that I can't quite figure out.
-    # Adding a small pause here seems to make it go away.
-    select undef, undef, undef, $self->waitfor_pause;
-    my ($prematch, $match) = $self->SUPER::waitfor(@_);
-
-    # If waitfor saw a prompt then store it.
-    if ($match) {
-	for (@literals) {
-	    ($ {*$self}{net_telnet_cisco}{last_prompt}) = $match =~ /($_)/;
-	    if ($1) {
-		return wantarray ? ($prematch, $match) : 1;
-	    }
-	}
-
-	if ($match =~ /($all_prompts)/m ) {
-	    $ {*$self}{net_telnet_cisco}{last_prompt} = $1;
-
-	    return wantarray ? ($prematch, $match) : 1;
-	}
-    }
-
-    return wantarray ? ( $prematch, $match ) : 1;
+    return $stream->{more_prompt};
 }
 
-
-sub login {
-    my($self) = @_;
-    my(
-       $cmd_prompt,
-       $endtime,
-       $error,
-       $lastline,
-       $match,
-       $orig_errmode,
-       $orig_timeout,
-       $prematch,
-       $reset,
-       $timeout,
-       $usage,
-       );
-    my ($username, $password, $passcode, $level) = ('','','','');
-    my (%args, %seen);
-
-    local $_;
-
-    ## Init vars.
-    $timeout = $self->timeout;
-    $self->timed_out('');
-    return if $self->eof;
-    $cmd_prompt = $self->prompt;
-    $usage = 'usage: $obj->login([Name => $name,] [Password => $password,] '
-	   . '[Passcode => $passcode,] [Prompt => $match,] [Timeout => $secs,])';
-
-    if (@_ == 3) {  # just username and passwd given
-	($username, $password) = (@_[1,2]);
-    }
-    else {  # named args given
-	## Get the named args.
-	(undef, %args) = @_;
-
-	## Parse the named args.
-	foreach (keys %args) {
-	    if (/^-?name$/i) {
-		$username    = $args{$_};
-	    } elsif (/^-?passw/i) {
-		$password    = $args{$_};
-	    } elsif (/^-?passcode/i) {
-		$passcode    = $args{$_};
-	    } elsif (/^-?prompt$/i) {
-		$cmd_prompt  = $args{$_};
-		return $self->error("bad match operator: ",
-				    "opening delimiter missing: $cmd_prompt")
-		    unless $cmd_prompt =~ m(^\s*(?:m\s*\W)?/);
-	    } elsif (/^-?timeout$/i) {
-		$timeout = _parse_timeout($args{$_});
-	    } else {
-		return $self->error($usage);
-	    }
-	}
-    }
-
-    ## Override these user set-able values.
-    $endtime = _endtime($timeout);
-    $orig_timeout = $self->timeout($endtime);
-    $orig_errmode = $self->errmode;
-
-    ## Create a subroutine to reset to original values.
-    $reset
-	= sub {
-	    $self->errmode($orig_errmode);
-	    $self->timeout($orig_timeout);
-	    1;
-	};
-
-    ## Create a subroutine to generate an error for user.
-    $error
-	= sub {
-	    my($errmsg) = @_;
-
-	    &$reset;
-	    if ($self->timed_out) {
-		return $self->error($errmsg);
-	    } elsif ($self->eof) {
-		($lastline = $self->lastline) =~ s/\n+//;
-		return $self->error($errmsg, ": ", $lastline);
-	    } else {
-		return $self->error($self->errmsg);
-	    }
-	};
-
-    ## The current command-prompt in a form we can feed to a m//
-    my $cmd_prompt_re = re_sans_delims($cmd_prompt);
-
-    while (1) {
-
-	(undef, $_) = $self->waitfor(
-		-match => '/(?:[Ll]ogin|[Uu]sername|[Pp]assw(?:or)?d)[:\s]*$/',
-		-match => '/(?i:Passcode)[:\s]*$/',
-		-match => "/(?s:$cmd_prompt_re)/",
-	);
-
-	unless ($_) {
-	    return &$error("read eof waiting for login or password prompt")
-		if $self->eof;
-	    return &$error("timed-out during login process");
-	}
-
-	if (not defined) {
-	    return $self->error("login failed: access denied or bad name, passwd, etc");
-	} elsif (/sername|ogin/) {
-	    $self->print($username) or return &$error("login disconnected");
-	    $seen{login}++ && $self->error("login failed: access denied or bad username");
-	} elsif (/[Pp]assw/) {
-	    $self->print($password) or return &$error("login disconnected");
-	    $seen{passwd}++ && $self->error("login failed: access denied or bad password");
-	} elsif (/(?i:Passcode)/) {
-	    $self->print($passcode) or return &$error("login disconnected");
-	    $seen{passcode}++ && $self->error("login failed: access denied or bad passcode");
-	} elsif (/($cmd_prompt_re)/) {
-	    &$reset; # Success. Reset obj to default vals before continuing.
-	    last;
-	} else {
-	    $self->error("login received unexpected prompt. Aborting.");
-	}
-    }
-
-    1;
-} # end sub login
-
-#------------------------------
-# Class methods
-#------------------------------
-
-# Join two or more regexen into one on "|"
+# Join two or more regexen into one on "|".
 sub prompt_append {
+    my $self = shift;
     my $orig = shift || '';
-    die "prompt_append(orig, new, [new...]) called incorrectly" unless @_;
+    return $self->error("usage: \$obj->prompt_append(orig, new, [new...])")
+	unless @_;
 
-    # Things that may be prompt regexps.
-    my $promptish = '^\s*(?:/|m\W).*';
+    print "prompt_append:\t[original: $orig]\n" if $DEBUG;
 
-    if ($orig =~ /($promptish)/) {
-	$orig = re_sans_delims($1) or return;
+    if ($orig) {
+	if ($self->_match_check($orig)) {
+	    $orig = $self->re_sans_delims($orig);
+	}
     }
 
     for (@_) {
-	if (my ($re) = /($promptish)/) {
-	    $re = re_sans_delims($re) or return;
+	print "prompt_append:\t[append: $_]\n" if $DEBUG;
+	if ($self->_match_check($_)) {
+	    my $re = $self->re_sans_delims($_);
 	    $orig .= $orig ? "|$re" : $re;
 	}
     }
 
-    return $orig;
+    print "prompt_append:\t[return: /$orig/]\n\n" if $DEBUG;
+    return "/$orig/";
 }
 
 # Return a Net::Telnet regular expression without the delimiters.
 sub re_sans_delims {
-    my $str = shift;
+    my ($self, $str) = @_;
+
+    return $self->error("usage: \$obj->re_sans_delims(\$matchop)")
+	unless $str;
+
+    $self->_match_check($str);
     my ($delim, $re) = $str =~  /^\s*m?\s*(\W)(.*)\1\s*$/;
     return $re;
 }
+
+#------------------------------
+# Private methods
+#------------------------------
+
+# Lifted from Net::Telnet en toto
+sub _match_check {
+    my ($self, $code) = @_;
+    return unless $code;
+
+    my $error;
+    my @warns = ();
+
+    print "_match_check:\t[Checking: $code]\n" if $DEBUG;
+
+    ## Use eval to check for syntax errors or warnings.
+    {
+	local $SIG{'__DIE__'} = 'DEFAULT';
+	local $SIG{'__WARN__'} = sub { push @warns, @_ };
+	local $^W = 1;
+	local $_ = '';
+	eval "\$_ =~ $code;";
+    }
+    if ($@) {
+	## Remove useless lines numbers from message.
+	($error = $@) =~ s/ at \(eval \d+\) line \d+.?//;
+	chomp $error;
+	return $self->error("bad match operator: $error");
+    }
+    elsif (@warns) {
+	## Remove useless lines numbers from message.
+	($error = shift @warns) =~ s/ at \(eval \d+\) line \d+.?//;
+	$error =~ s/ while "strict subs" in use//;
+	chomp $error;
+	return $self->error("bad match operator: $error");
+    }
+
+    1;
+} # end sub _match_check
+
+#------------------------------
+# Class methods
+#------------------------------
 
 # Look for subroutines in Net::Telnet if we can't find them here.
 sub AUTOLOAD {
@@ -608,6 +722,33 @@ SNMP, there's Net::Telnet::Cisco.
 
 =over 4
 
+=item B<new> - create new Net::Telnet::Cisco object
+
+    $session = Net::Telnet::Cisco->new(
+	[Autopage		  => $boolean,]
+	[More_prompt		  => $matchop,]
+	[Always_waitfor_prompt	  => $boolean,]
+	[Waitfor_pause		  => $milliseconds,]
+	
+	# Net::Telnet arguments
+	[Binmode		  => $mode,]
+	[Cmd_remove_mode	  => $mode,]
+	[Dump_Log		  => $filename,]
+	[Errmode		  => $errmode,]
+	[Fhopen			  => $filehandle,]
+	[Host			  => $host,]
+	[Input_log		  => $file,]
+	[Input_record_separator	  => $char,]
+	[Option_log		  => $file,]
+	[Output_log		  => $file,]
+	[Output_record_separator  => $char,]
+	[Port			  => $port,]
+	[Prompt			  => $matchop,]
+	[Telnetmode		  => $mode,]
+	[Timeout		  => $secs,]
+    );
+
+Creates a new object. Read `perldoc perlboot` if you don't understand that.
 
 =item B<login> - login to a router
 
@@ -616,8 +757,8 @@ SNMP, there's Net::Telnet::Cisco.
     $ok = $obj->login([Name     => $username,]
                       [Password => $password,]
                       [Passcode => $passcode,] # for Secur-ID/XTACACS
-                      [Prompt  => $match,]
-                      [Timeout => $secs,]);
+                      [Prompt   => $match,]
+                      [Timeout  => $secs,]);
 
 All arguments are optional as of v1.05. Some routers don't ask for a
 username, they start the login conversation with a password request.
@@ -714,30 +855,69 @@ This method exits the router's privileged mode.
 last_prompt() will return '' if the program has not yet matched a
 prompt.
 
-=item B<always_waitfor_prompt> - waitfor prompt autoinsertion behavior
+=item B<always_waitfor_prompt> - waitfor and cmd prompt behaviour
 
     $boolean = $obj->always_waitfor_prompt;
 
-    $boolean = $obj->always_waitfor_prompt(0);
+    $boolean = $obj->always_waitfor_prompt($boolean);
 
-By default, waitfor will return control to you on a successful match 
-of the current prompt. Disable this behaviour by setting this method
-to a false value.
+If you pass a Prompt argument to cmd() or waitfor() a String or Match,
+they will return control on a successful match of your argument(s) or
+the default prompt. Set always_waitfor_prompt to 0 to return control
+only for your arguments.
+
+This method has no effect on login(). login() will always wait for a
+prompt.
 
 =item B<waitfor_pause> - insert a small delay before waitfor()
 
     $boolean = $obj->waitfor_pause;
 
-    $boolean = $obj->waitfor_pause(0.1);
+    $boolean = $obj->waitfor_pause($milliseconds);
 
 In rare circumstances, the last_prompt is set incorrectly. By adding
 a very small delay before calling the parent class's waitfor(), this
 bug is eliminated. If you ever find reason to modify this from it's
 default setting, please let me know.
 
+=item B<autopage> - Turn autopaging on and off
+
+    $boolean = $obj->autopage;
+
+    $boolean = $obj->autopage($boolean);
+
+IOS pages output by default. It expects human eyes to be reading the
+output, not programs. Humans hit the spacebar to scroll page by
+page so autopage() mimicks that behaviour. This is the slow way to
+handle paging. See the Paging EXAMPLE for a faster way.
+
+=item B<more_prompt> - Regex used by autopage()
+
+    $matchop = $obj->prompt;
+
+    $prev = $obj->prompt($matchop);
+
+Default is '/(?m:\s*--More--)/'.
+
+Please email me if you find others.
+
+
 =back
 
 =head1 EXAMPLES
+
+=head2 Paging
+
+v1.08 added internal autopaging support to cmd(). Whenever a '--Page--'
+prompt appears on the screen, we send a space right back. It works, but
+it's slow. You'd be better off sending one of the following commands
+just after login():
+
+  # To a router
+  $session->cmd('terminal length 0');
+
+  # To a switch
+  $session->cmd('set length 0');
 
 =head2 Logging
 
@@ -753,25 +933,6 @@ See input_log() in L<Net::Telnet> for info.
 Input logs are easy-to-read translated transcripts with all of the
 control characters and telnet escapes cleaned up. If you want to view
 the raw session, see dump_log() in L<Net::Telnet>.
-
-=head2 Paging
-
-=begin UNIMPLEMENTED
-
-v1.xx added internal depaging support to cmd(). Whenever a ' --Page-- '
-prompt appears on the screen, we send a space right back. It works, but
-it's slow. You'd be better off sending one of the following commands:
-
-=end UNIMPLEMENTED
-
-To turn off a router's C< --Page-- > prompts, send one of the following commands to
-the router/switch just after login().
-
-  # To a router
-  $session->cmd('terminal length 0');
-
-  # To a switch
-  $session->cmd('set length 0');
 
 =head2 Big output
 
@@ -863,7 +1024,7 @@ L<RATE<sol>NCAT project http:E<sol>E<sol>ncat.sourceforge.netE<sol>>
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2002/01/15 20:33:30 $
+Joshua_Keroes@eli.net $Date: 2002/01/30 23:41:54 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.
@@ -889,3 +1050,4 @@ Copyright (c) 2000-2002 Joshua Keroes, Electric Lightwave Inc.
 All rights reserved. This program is free software; you
 can redistribute it and/or modify it under the same terms
 as Perl itself.
+

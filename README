@@ -41,14 +41,42 @@ CAVEATS
     there's Net::Telnet::Cisco.
 
 METHODS
+    new - create new Net::Telnet::Cisco object
+            $session = Net::Telnet::Cisco->new(
+                [Autopage                 => $boolean,]
+                [More_prompt              => $matchop,]
+                [Always_waitfor_prompt    => $boolean,]
+                [Waitfor_pause            => $milliseconds,]
+        
+                # Net::Telnet arguments
+                [Binmode                  => $mode,]
+                [Cmd_remove_mode          => $mode,]
+                [Dump_Log                 => $filename,]
+                [Errmode                  => $errmode,]
+                [Fhopen                   => $filehandle,]
+                [Host                     => $host,]
+                [Input_log                => $file,]
+                [Input_record_separator   => $char,]
+                [Option_log               => $file,]
+                [Output_log               => $file,]
+                [Output_record_separator  => $char,]
+                [Port                     => $port,]
+                [Prompt                   => $matchop,]
+                [Telnetmode               => $mode,]
+                [Timeout                  => $secs,]
+            );
+
+        Creates a new object. Read `perldoc perlboot` if you don't
+        understand that.
+
     login - login to a router
             $ok = $obj->login($username, $password);
 
             $ok = $obj->login([Name     => $username,]
                               [Password => $password,]
                               [Passcode => $passcode,] # for Secur-ID/XTACACS
-                              [Prompt  => $match,]
-                              [Timeout => $secs,]);
+                              [Prompt   => $match,]
+                              [Timeout  => $secs,]);
 
         All arguments are optional as of v1.05. Some routers don't ask for a
         username, they start the login conversation with a password request.
@@ -141,26 +169,62 @@ METHODS
         last_prompt() will return '' if the program has not yet matched a
         prompt.
 
-    always_waitfor_prompt - waitfor prompt autoinsertion behavior
+    always_waitfor_prompt - waitfor and cmd prompt behaviour
             $boolean = $obj->always_waitfor_prompt;
 
-            $boolean = $obj->always_waitfor_prompt(0);
+            $boolean = $obj->always_waitfor_prompt($boolean);
 
-        By default, waitfor will return control to you on a successful match
-        of the current prompt. Disable this behaviour by setting this method
-        to a false value.
+        If you pass a Prompt argument to cmd() or waitfor() a String or
+        Match, they will return control on a successful match of your
+        argument(s) or the default prompt. Set always_waitfor_prompt to 0 to
+        return control only for your arguments.
+
+        This method has no effect on login(). login() will always wait for a
+        prompt.
 
     waitfor_pause - insert a small delay before waitfor()
             $boolean = $obj->waitfor_pause;
 
-            $boolean = $obj->waitfor_pause(0.001);
+            $boolean = $obj->waitfor_pause($milliseconds);
 
         In rare circumstances, the last_prompt is set incorrectly. By adding
         a very small delay before calling the parent class's waitfor(), this
         bug is eliminated. If you ever find reason to modify this from it's
         default setting, please let me know.
 
+    autopage - Turn autopaging on and off
+            $boolean = $obj->autopage;
+
+            $boolean = $obj->autopage($boolean);
+
+        IOS pages output by default. It expects human eyes to be reading the
+        output, not programs. Humans hit the spacebar to scroll page by page
+        so autopage() mimicks that behaviour. This is the slow way to handle
+        paging. See the Paging EXAMPLE for a faster way.
+
+    more_prompt - Regex used by autopage()
+            $matchop = $obj->prompt;
+
+            $prev = $obj->prompt($matchop);
+
+        Default is '/(?m:\s*--More--)/'.
+
+        Please email me if you find others.
+
 EXAMPLES
+  Paging
+
+    v1.08 added internal autopaging support to cmd(). Whenever a '--Page--'
+    prompt appears on the screen, we send a space right back. It works, but
+    it's slow. You'd be better off sending one of the following commands
+    just after login():
+
+      # To a router
+      $session->cmd('terminal length 0');
+
+      # To a switch
+      $session->cmd('set length 0');
+
   Logging
 
     Want to see the session transcript? Just call input_log().
@@ -175,17 +239,6 @@ EXAMPLES
     Input logs are easy-to-read translated transcripts with all of the
     control characters and telnet escapes cleaned up. If you want to view
     the raw session, see dump_log() in Net::Telnet.
-
-  Paging
-
-    To turn off a router's " --Page-- " prompts, send one of the following
-    commands to the router/switch just after login().
-
-      # To a router
-      $session->cmd('terminal length 0');
-
-      # To a switch
-      $session->cmd('set length 0');
 
   Big output
 
@@ -273,7 +326,7 @@ SEE ALSO
     "RAT/NCAT project http://ncat.sourceforge.net/"
 
 AUTHOR
-    Joshua_Keroes@eli.net $Date: 2002/01/10 21:14:30 $
+    Joshua_Keroes@eli.net $Date: 2002/01/30 23:50:40 $
 
     It would greatly amuse the author if you would send email to him and
     tell him how you are using Net::Telnet::Cisco.
@@ -285,7 +338,7 @@ THANKS
     The following people understand what Open Source Software is all about.
     Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony Mueller, Frank
     Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen, Niels van Dijke,
-    Kevin der Kinderen, and Ian Batterbee.
+    Kevin der Kinderen, Ian Batterbee, and Leonardo Cont.
 
     Institutions: infobot.org #perl, perlmonks.org, the geeks at
     geekhouse.org, and eli.net.
@@ -293,7 +346,7 @@ THANKS
     Send in a patch and we can make the world a better place.
 
 COPYRIGHT AND LICENSE
-    Copyright (c) 2000-2001 Joshua Keroes, Electric Lightwave Inc. All
+    Copyright (c) 2000-2002 Joshua Keroes, Electric Lightwave Inc. All
     rights reserved. This program is free software; you can redistribute it
     and/or modify it under the same terms as Perl itself.
 
