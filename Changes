@@ -1,4 +1,4 @@
-$Id: Changes,v 1.17 2002/03/22 18:51:28 jkeroes Exp $
+$Id: Changes,v 1.19 2002/06/18 16:37:02 jkeroes Exp $
 
 Revision history for Perl extension Net::Telnet::Cisco.
 
@@ -62,3 +62,8 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- Project has a home: NetTelnetCisco.sourceforge.net
 	- New method: ios_break() - sends control-^
 	- Using ExtUtils::MakeMaker::prompt in test.pl for noninteractive installs
+
+1.10  Tue Jun 18 10:28:05 PDT 2002
+	- send_wakeup() written to help use module with Livingston Portmasters.
+	- warnings() and ignore_warnings() allow some error-strings to be ignored.
+	- fixed warning in prompt_append()

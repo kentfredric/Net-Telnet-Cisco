@@ -9,4 +9,8 @@ WriteMakefile(
 			     Test::More => undef,
 			     Cwd => undef,
 			   }, # e.g., Module::Name => 1.1
+     ($] ge '5.005') ? (
+			'AUTHOR' => 'Joshua Keroes (joshua@cpan.org)',
+			'ABSTRACT' => 'automate Cisco management',
+		       ) : (),
 );

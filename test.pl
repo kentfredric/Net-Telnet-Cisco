@@ -1,4 +1,4 @@
-# $Id: test.pl,v 1.18 2002/03/22 18:47:44 jkeroes Exp $
+# $Id: test.pl,v 1.19 2002/04/02 18:59:30 jkeroes Exp $
 #
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
@@ -36,6 +36,12 @@ SKIP: {
 				    ),  "new() object" );
 
     $S->errmode(sub {&confess});
+
+    # So we pass an even number of args to login()
+    $LOGIN	   ||= '';
+    $PASSWD	   ||= '';
+    $PASSCODE      ||= '';
+
     ok( $S->login(-Name     => $LOGIN,
 		  -Password => $PASSWD,
 		  -Passcode => $PASSCODE), "login()"		);

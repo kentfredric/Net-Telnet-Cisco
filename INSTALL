@@ -1,30 +1,13 @@
 INSTALL
 
-1. How to install Net::Telnet::Cisco
-
 1.1 Prerequisites
 
+	Net::Telnet::Cisco relies on and extends Net::Telnet.
+
+	CPAN and PPM will both automatically detect and install
+	this module for you.
+
 	+ Net::Telnet 3.02
-
-	------------------------------
-
-	Windows machines need some additional modules to make PPM 
-	(the Perl Package Manager) work correctly:
-
-	+ nmake
-	ftp://ftp.microsoft.com/Softlib/MSLFILES/nmake15.exe
-
-	+ Compress::Tar
-	ftp://ftp.cpan.org/CPAN/authors/id/SRZ/Archive-Tar-0.22.tar.gz
-
-	+ Compress::Zlib
-	ftp://ftp.cpan.org/CPAN/authors/id/PMQS/Compress-Zlib-1.08.tar.gz
-
-	+ PPM
-	PPM is installed when you install ActivePerl.
-		
-	For more information, read the PPM FAQ:
-	http://www.activestate.com/Products/ActivePerl/docs/faq/ActivePerl-faq2.html
 
 ------------------------------------------------------------
 
@@ -32,48 +15,93 @@ INSTALL
 
 1.2.1 UNIX
 
-	If you've never used CPAN before, set it up:
+	1.2.1.1 CPAN Install
 
-	$ perl -MCPAN -e shell
-	# ...and follow the instructions. When done, type:
-	cpan> install Net::Telnet::Cisco
+		1. Run the CPAN shell from your command-line:
+	
+			$ perl -MCPAN -e shell
 
-	------------------------------
+		2. If this is your first time running CPAN, it will ask
+		you a number of setup questions.
 
-	If you've used the CPAN module in the past, it's easier:
+		3. Install the module:
 
-	$ perl -MCPAN -e 'install Net::Telnet::Cisco'
+			cpan> install Net::Telnet::Cisco
 
-	------------------------------
+	1.2.1.2 Manual Install
 
-	Failing those, download the module and install by hand:
+		Failing those, download the module and install by hand:
 
-	$ perl Makefile.PL [--prefix=...]
-	$ make
-	$ make test
-	$ make install
+			$ perl Makefile.PL [--prefix=...]
+			$ make
+			$ make test
+			$ make install
 
 1.2.2 Windows
 
-	I, uh, don't have a Windows machine so this may or may not work.
-	:-) First, make sure you have the software listed in section 1.1 
-	installed. Next, use PPM to download and install Net::Telnet::Cisco. 
-	The FAQ listed in section 1.1 may be able to help you; I certainly 
-	can't.
+	There are two ways to install Net::Telnet::Cisco on a Windows
+	machine: 
 
-	Kindly email me if you can provide instructions on accomplishing this.
-	Thanks.
+	1.2.2.1 Install with PPM3, the ActiveState Perl Package Manager
+
+		1. run PPM3
+
+		2. type "rep add NTC http://prdownloads.sourceforge.net/nettelnetcisco/"
+		(without the quotes)
+
+		3. type "install Net::Telnet::Cisco".
+		
+		For more information, read the PPM FAQ:
+		http://aspn.activestate.com/ASPN/Reference/Products/ActivePerl/faq/ActivePerl-faq2.html
+
+	1.2.2.2 Install with PPM, v2, the older version
+
+		1. run PPM.
+
+		2. type "set repository NTC http://prdownloads.sourceforge.net/nettelnetcisco/"
+		(without the quotes)
+
+		3. type "install Net::Telnet::Cisco".
+
+	1.2.2.2 Install with CPAN
+
+		Windows needs an additional program called "nmake" to
+		install modules with CPAN. 
+
+		1. Get and install nmake from 
+		ftp://ftp.microsoft.com/Softlib/MSLFILES/nmake15.exe
+
+		2. Run CPAN from a DOS prompt:
+
+			C:\WINDOWS\DESKTOP> perl -MCPAN -e shell
+
+		3. If this is your first time running CPAN, it will ask
+		you a number of setup questions. When it asks you for
+		the location of 'make', give it the path to 'nmake'.
+
+		4. install Net::Telnet::Cisco from CPAN:
+
+			cpan> install Net::Telnet::Cisco
 
 1.2.3 MacOS
 
-	*blink blink* uhhhhh. I own no Mac either. Can someone help me with
-	this section too?
+	1. If you have MacOS X, you can run the CPAN program from a Terminal:
+
+		perl -MCPAN -e shell
+
+	2. If this is your first time running CPAN, it will ask
+	you a number of setup questions.
+
+	3. Install the module:
+
+		cpan> install Net::Telnet::Cisco
 
 1.3 Troubleshooting
 
-	Email joshua_keroes@eli.net if you have difficulties.
+	Discuss on the mailing lists of forums at 
+	http://NetTelnetCisco.SourceForge.net/
 
 	Please include a script(1) typescript of the installation problems.
 
-$Id: INSTALL,v 1.1.1.1 2000/07/30 19:22:49 jkeroes Exp $
+$Id: INSTALL,v 1.2 2002/06/18 17:07:39 jkeroes Exp $
 __END__

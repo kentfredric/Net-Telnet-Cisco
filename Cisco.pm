@@ -3,7 +3,7 @@ package Net::Telnet::Cisco;
 #-----------------------------------------------------------------
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.44 2002/03/22 18:48:20 jkeroes Exp $
+# $Id: Cisco.pm,v 1.52 2002/06/18 17:17:03 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
@@ -21,7 +21,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION $DEBUG);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = 1.09;
+$VERSION  = '1.10';
 $^W       = 1;
 $DEBUG    = 0;
 $|++;
@@ -46,11 +46,25 @@ sub new {
     *$self->{net_telnet_cisco} = {
 	last_prompt	       => '',
         last_cmd	       => '',
+
         always_waitfor_prompt  => 1,
 	waitfor_pause	       => 0.1,
+
 	autopage	       => 1,
+
 	more_prompt	       => '/(?m:^\s*--More--)/',
+
 	normalize_cmd	       => 1,
+
+	send_wakeup 	       => 0,
+
+	ignore_warnings	       => 0,
+	warnings	       => '/(?mx:^% Unknown VPN
+				     |^%IP routing table VRF.* does not exist. Create first$
+				     |^%No CEF interface information
+				     |^%No matching route to delete$
+				     |^%Not all config may be removed and may reappear after reactivating/
+				   )/',
     };
 
     ## Parse the args.
@@ -82,6 +96,9 @@ sub new {
 	    }
             elsif (/^-?normalize_cmd$/i) {
                 $self->normalize_cmd($args{$_});
+	    }
+	    elsif (/^-?send_wakeup$/i) {
+		$self->send_wakeup($args{$_});
 	    }
 	}
     }
@@ -321,8 +338,9 @@ sub login {
        $reset,
        $timeout,
        $usage,
+       $sent_wakeup,
        );
-    my ($username, $password, $passcode, $level) = ('','','','');
+    my ($username, $password, $tacpass, $passcode ) = ('','','','');
     my (%args, %seen);
 
     local $_;
@@ -332,6 +350,7 @@ sub login {
     $self->timed_out('');
     return if $self->eof;
     $cmd_prompt = $self->prompt;
+    $sent_wakeup = 0;
 
     print "login:\t[orig: $cmd_prompt]\n" if $DEBUG;
 
@@ -396,6 +415,20 @@ sub login {
 	    }
 	};
 
+
+    # Send a newline as the wakeup-call
+    if ($self->send_wakeup eq 'connect') {
+
+	$sent_wakeup = 1;
+
+	my $old_sep = $self->output_record_separator;
+
+	$self->output_record_separator("\n");
+	$self->print('');
+	$self->output_record_separator($old_sep);
+    }
+
+
     while (1) {
 	(undef, $_) = $self->waitfor(
 		-match => '/(?:[Ll]ogin|[Uu]sername|[Pp]assw(?:or)?d)[:\s]*$/',
@@ -406,6 +439,21 @@ sub login {
 	unless ($_) {
 	    return &$error("read eof waiting for login or password prompt")
 		if $self->eof;
+
+	    # We timed-out. Send a newline as the wakeup-call.
+	    if ($sent_wakeup == 0 && $self->send_wakeup eq 'timeout') {
+
+		$sent_wakeup = 1;
+
+		my $old_sep = $self->output_record_separator;
+
+		$self->output_record_separator("\n");
+		$self->print('');
+		$self->output_record_separator($old_sep);
+
+		next;
+	    }
+
 	    return &$error("timed-out during login process");
 	}
 
@@ -432,6 +480,21 @@ sub login {
 
     1;
 } # end sub login
+
+
+# Overridden to support ignore_warnings()
+sub error {
+    my $self = shift;
+
+    # Ignore warnings
+    if ($self->ignore_warnings) {
+	my $errmsg = join '', @_;
+	my $warnings_re = $self->re_sans_delims($self->warnings);
+	return if $errmsg =~ /$warnings_re/;
+    }
+
+    return $self->SUPER::error(@_);
+}
 
 
 # Tries to enter enabled mode with the password arg.
@@ -605,6 +668,22 @@ sub normalize_cmd {
     return $stream->{normalize_cmd};
 }
 
+# Typical get/set method.
+sub send_wakeup {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    $stream->{send_wakeup} = $arg if defined $arg;
+    return $stream->{send_wakeup};
+}
+
+# Typical get/set method.
+sub ignore_warnings {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    $stream->{ignore_warnings} = $arg if defined $arg;
+    return $stream->{ignore_warnings};
+}
+
 # Get/set the More prompt
 sub more_prompt {
     my ($self, $arg) = @_;
@@ -628,6 +707,7 @@ sub prompt_append {
     if ($orig) {
 	if ($self->_match_check($orig)) {
 	    $orig = $self->re_sans_delims($orig);
+	    return $self->error("Can't parse prompt: '$orig'") unless $orig;
 	}
     }
 
@@ -635,6 +715,12 @@ sub prompt_append {
 	print "prompt_append:\t[append: $_]\n" if $DEBUG;
 	if ($self->_match_check($_)) {
 	    my $re = $self->re_sans_delims($_);
+
+	    unless ($re) {
+		$self->error("Can't parse prompt: '$_'");
+		next;
+	    }
+
 	    $orig .= $orig ? "|$re" : $re;
 	}
     }
@@ -783,6 +869,9 @@ SNMP, there's Net::Telnet::Cisco.
 	[Always_waitfor_prompt	  => $boolean,] # 1
 	[Waitfor_pause		  => $milliseconds,] # 0.1
 	[Normalize_cmd		  => $boolean,] # 1
+	[Send_wakeup		  => $when,] # 0
+	[Ignore_warnings	  => $boolean,] # 0
+	[Warnings		  => $matchop,] # see docs
 	
 	# Net::Telnet arguments
 	[Binmode		  => $mode,]
@@ -797,7 +886,7 @@ SNMP, there's Net::Telnet::Cisco.
 	[Output_log		  => $file,]
 	[Output_record_separator  => $char,]
 	[Port			  => $port,]
-	[Prompt			  => $matchop,]
+	[Prompt			  => $matchop,] # see docs
 	[Telnetmode		  => $mode,]
 	[Timeout		  => $secs,]
     );
@@ -819,20 +908,20 @@ username, they start the login conversation with a password request.
 
 =item B<cmd> - send a command
 
-             $ok = $obj->cmd($string);
-             $ok = $obj->cmd(String   => $string,
-                             [Output  => $ref,]
-                             [Prompt  => $match,]
-                             [Timeout => $secs,]
-                             [Cmd_remove_mode => $mode,]);
+    $ok = $obj->cmd($string);
+    $ok = $obj->cmd(String   => $string,
+                    [Output  => $ref,]
+                    [Prompt  => $match,]
+                    [Timeout => $secs,]
+                    [Cmd_remove_mode => $mode,]);
 
-             @output = $obj->cmd($string);
-             @output = $obj->cmd(String   => $string,
-                                 [Output  => $ref,]
-                                 [Prompt  => $match,]
-                                 [Timeout => $secs,]
-                                 [Cmd_remove_mode => $mode,]
-                                 [Normalize_cmd => $boolean,]);
+    @output = $obj->cmd($string);
+    @output = $obj->cmd(String   => $string,
+                        [Output  => $ref,]
+                        [Prompt  => $match,]
+                        [Timeout => $secs,]
+                        [Cmd_remove_mode => $mode,]
+                        [Normalize_cmd => $boolean,]);
 
 Normalize_cmd has been added to the default Net::Telnet args. It
 lets you temporarily change whether backspace, delete, and kill
@@ -994,7 +1083,7 @@ output, turn this feature off.
 
 Logging is unaffected by this setting.
 
-=item B<more_prompt> - Regex used by autopage()
+=item B<more_prompt> - Matchop used by autopage()
 
     $matchop = $obj->prompt;
 
@@ -1004,6 +1093,55 @@ Default value: '/(?m:\s*--More--)/'.
 
 Please email me if you find others.
 
+=item B<send_wakeup> - send a newline to the router at login time
+
+    $when = $obj->send_wakeup;
+
+    $when = $obj->send_wakeup( 'connect' );
+    $when = $obj->send_wakeup( 'timeout' );
+    $when = $obj->send_wakeup( 0 );
+
+Default value: 0
+
+Some routers quietly allow you to connect but don't display the
+expected login prompts. Sends a newline in the hopes that this
+spurs the routers to print something.
+
+'connect' sends a newline immediately upon connection.
+'timeout' sends a newline if the connection timeouts.
+0 turns this feature off.
+
+I understand this works with Livingston Portmasters.
+
+=item B<ignore_warnings> - Don't call error() for warnings
+
+    $boolean = $obj->ignore_warnings;
+
+    $boolean = $obj->ignore_warnings($boolean);
+
+Default value: 0
+
+Not all strings that begin with a '%' are really errors. Some are just
+warnings. By setting this, you are ignoring them. This will show up in
+the logs, but that's it.
+
+=item B<warnings> - Matchop used by ignore_warnings().
+
+    $boolean = $obj->warnings;
+
+    $boolean = $obj->warnings($matchop);
+
+Default value:
+
+	/(?mx:^% Unknown VPN
+	     |^%IP routing table VRF.* does not exist. Create first$
+	     |^%No CEF interface information
+	     |^%No matching route to delete$
+	     |^%Not all config may be removed and may reappear after reactivating
+	 )/
+
+Not all strings that begin with a '%' are really errors. Some are just
+warnings. Cisco calls these the CIPMIOSWarningExpressions.
 
 =back
 
@@ -1035,7 +1173,9 @@ See input_log() in L<Net::Telnet> for info.
 
 Input logs are easy-to-read translated transcripts with all of the
 control characters and telnet escapes cleaned up. If you want to view
-the raw session, see dump_log() in L<Net::Telnet>.
+the raw session, see dump_log() in L<Net::Telnet>. If you're getting
+tricky and using print() in addition to cmd(), you may also want to use 
+output_log().
 
 =head2 Big output
 
@@ -1153,7 +1293,7 @@ RAT/NCAT - http://ncat.sourceforge.net/
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2002/03/22 18:48:20 $
+Joshua_Keroes@eli.net $Date: 2002/06/18 17:17:03 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.
