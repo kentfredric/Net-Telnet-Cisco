@@ -1,4 +1,4 @@
-# $Id: test.pl,v 1.5 2000/07/25 00:05:17 jkeroes Exp $
+# $Id: test.pl,v 1.2 2000/07/30 20:54:20 jkeroes Exp $
 #
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
@@ -29,7 +29,7 @@ use vars qw/$ROUTER $PASSWD $LOGIN $SESSION/;
 my $i      = 1;
 my $badbad = 0;
 
-foreach my $cref ( qw(t2 t3 t4 t5) ) {
+foreach my $cref ( qw(t2 t3 t4 t5 t6) ) {
 
     if ( ++$i >= 3 and not $SESSION ) {
 	print "not ok $i\n";
@@ -122,7 +122,7 @@ sub t3 {
 
 sub t4 {
     $SESSION->errmsg('');	# reset errmsg to noerr.
-    my @out = $SESSION->cmd( 'show running-config' );
+    my @out = $SESSION->cmd( 'show users' );
     return FAIL if $SESSION->errmsg;
     return @out ? PASS : FAIL;
 }
@@ -132,4 +132,9 @@ sub t5 {
     $SESSION->errmode( sub { $success = 1 } );
     my @out = $SESSION->cmd( 'asdmnbvzvctoiubqwerhgadfhg' );
     return $success ? PASS : FAIL;
+}
+
+sub t6 {
+    my $ok = $SESSION->cmd( String => 'show privilege' );
+    return $ok ? PASS : FAIL;
 }

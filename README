@@ -4,7 +4,7 @@ NAME
 SYNOPSIS
       use Net::Telnet::Cisco;
 
-      my $cs = Net::Telnet::Cisco->( Host => '123.123.123.123' );
+      my $cs = Net::Telnet::Cisco->new( Host => '123.123.123.123' );
       $cs->login( 'login', 'password' );
 
       # Turn off paging
@@ -27,6 +27,14 @@ SYNOPSIS
       print "Cmd output: <",   @cmd_output,      ">\n";
       print "-" x 30, "\n";
 
+      # Try out enable mode
+      if ( $cs->enable("enable_password") ) {
+          @cmd_output = $cs->cmd('show privilege');
+          print "Cmd output: <", @cmd_output, ">\n";
+      } else {
+          warn "Can't enable: " . $cs->errmsg;
+      }
+
       $cs->close;
 
 DESCRIPTION
@@ -35,7 +43,7 @@ DESCRIPTION
 
     Things you should know:
 
-    The default cmd_prompt is /[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/,
+    The default cmd_prompt is /[\w().-]*[\$#>]\s?(?:\(enable\))?\s*$/,
     suitable for matching promtps like 'rtrname$ ', 'rtrname# ', and
     'rtrname> (enable) '.
 
@@ -49,9 +57,9 @@ FIRST
     come back to Net::Telnet::Cisco to see where the improvements are.
 
     Some things are easier to accomplish with Net::SNMP. SNMP has three
-    advantages: it tends to be faster, handles errors better, and doesn't
-    use any vtys on the router. SNMP does have some limitations, so for
-    anything you can't accomplish with SNMP, there's Net::Telnet::Cisco.
+    advantages: it's faster, handles errors better, and doesn't use any vtys
+    on the router. SNMP does have some limitations, so for anything you
+    can't accomplish with SNMP, there's Net::Telnet::Cisco.
 
 METHODS
     New methods not found in Net::Telnet follow:
@@ -76,16 +84,23 @@ METHODS
     last_prompt - displays the last prompt matched by prompt()
             $match = $obj->last_prompt;
 
-        last_prompt() will return undef if the program has not matched a
-        prompt yet.
+        last_prompt() will return '' if the program has not yet matched a
+        prompt.
 
     login - login to a router.
-        Supercedes Net::Telnet::login(). Net::Telnet::Cisco will correctly
-        log into a router if the session begins with a password prompt (and
-        ignores the login or username step entirely).
+            $ok = $obj->login($username, $password);
+
+            $ok = $obj->login(Name     => $username,
+                              Password => $password,
+                              [Prompt  => $match,]
+                              [Timeout => $secs,]);
+
+        Net::Telnet::Cisco will correctly log into a router if the session
+        begins with a password prompt (and ignores the login or username
+        step entirely).
 
 AUTHOR
-    Joshua_Keroes@eli.net $Date: 2000/07/25 00:05:17 $
+    Joshua_Keroes@eli.net $Date: 2000/07/30 22:16:51 $
 
     It would greatly amuse the author if you would send email to him and
     tell him how you are using Net::Telnet::Cisco.

@@ -4,7 +4,7 @@ package Net::Telnet::Cisco;
 #
 # Net::Telnet::Cisco - interact with a Cisco router
 #
-# $Id: Cisco.pm,v 1.10 2000/07/25 00:05:17 jkeroes Exp $
+# $Id: Cisco.pm,v 1.4 2000/07/30 22:16:51 jkeroes Exp $
 #
 # Todo: Add error and access logging.
 #
@@ -20,7 +20,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.02';
+$VERSION  = '1.03';
 
 #------------------------------
 # New Methods
@@ -29,34 +29,37 @@ $VERSION  = '1.02';
 # Tries to enter enabled mode with the password arg.
 sub enable {
     my ($self, $en_pass) = @_;
-    return $self->error( "Can't enable without a password" )
-        unless defined $en_pass;
+#    return $self->error( "Can't enable without a password" )
+#        unless defined $en_pass;
 
     # Store the old prompt without the //s around it.
-    my $old_prompt = $self->prompt;
-    $old_prompt =~ s|^/||;
-    $old_prompt =~ s|/$||;
+    my ($old_prompt) = re_sans_delims($self->prompt);
 
     unless ( $self->is_enabled ) {
-	# Store the old prompt here. If the user doesn't
-	# have enough access to run the 'enable' command, the
-	# device won't even query for a password, it will just
+	# We need to expect either a Password prompt or a
+	# typical prompt. If the user doesn't have enough
+	# access to run the 'enable' command, the device
+	# won't even query for a password, it will just
 	# ignore the command and display another [boring] prompt.
-	$self->prompt( '/^password[: ]*$|$old_prompt/' );
-	my $ok = $self->cmd( 'enable' );
+	$self->cmd(String => 'enable',
+		   Prompt => "/[Pp]assword[: ]*\$|$old_prompt/",
+		  );
+
 	if ( $self->last_prompt =~ /[Pp]ass/ ) {
-	    $ok = $self->cmd( $en_pass );
+	    if ( defined $en_pass ) {
+		$self->cmd($en_pass);
+	    } else {
+		$self->cmd('');
+	    }
 	}
     }
-    $self->prompt("/$old_prompt/"); # Restore old prompt;
-
     return $self->is_enabled ? 1 : $self->error('Failed to enter enabled mode');
 }
 
 # Leave enabled mode.
 sub disable {
     my $self	= shift;
-    my $ok	= $self->cmd( 'disable' );
+    $self->cmd('disable');
     return $self->is_enabled ? $self->error('Failed to exit enabled mode') : 1;
 }
 
@@ -82,7 +85,6 @@ sub is_enabled { $_[0]->last_prompt =~ /\#|enable/ ? 1 : undef }
 
 #------------------------------------------
 # Overridden Methods
-#
 #------------------------------------------
 
 sub new {
@@ -90,7 +92,7 @@ sub new {
 
     # There's a new cmd_prompt in town.
     my $self = $class->SUPER::new(
-       	prompt => '/[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/',
+       	prompt => '/[\w().-]*[\$#>]\s?(?:\(enable\))?\s*$/',
 	@_,			# user's additional arguments
     ) or return;
 
@@ -125,9 +127,8 @@ sub prompt {
 
         return $self->error('bad match operator: ',
                             "opening delimiter missing: $prompt")
-            unless $prompt =~ m|(^\s*/)| or $prompt =~ m|(^\s*m\s*\W)|;
+            unless $prompt =~ m|^\s*/|;
 
-	$stream->{last_prompt} = $1;
 	$self->SUPER::prompt($prompt);
 
     } elsif (@_ > 2) {
@@ -137,7 +138,7 @@ sub prompt {
     return $prev;
 } # end sub prompt
 
-# cmd()  now parses errors and sticks 'em where they belong.
+# cmd() now parses errors and sticks 'em where they belong.
 #
 # This is a routerish error:
 #   routereast#show asdf
@@ -155,11 +156,22 @@ sub prompt {
 
 sub cmd {
     my $self             = shift;
-    my $err              = 0;
-    my $cmd		 = shift;
+    my $ok               = 1;
+    my $cmd;
+
+    # Extract the command from arguments
+    if ( @_ == 1 ) {
+	$cmd = $_[0];
+    } elsif ( @_ >= 2 ) {
+	my @args = @_;
+	while ( my ( $k, $v ) = splice @args, 0, 2 ) {
+	    $cmd = $v if $k =~ /^-?[Ss]tring$/;
+	}
+    }
+
     $ {*$self}{net_telnet_cisco}{last_cmd} = $cmd;
 
-    my @output           = $self->SUPER::cmd( $cmd );
+    my @output = $self->SUPER::cmd(@_);
 
     for ( my ($i, $lastline) = (0, '');
 	  $i <= $#output;
@@ -188,11 +200,11 @@ sub cmd {
 		splice @output, $i, 2;
 	    }
 
-	    $err = 1;
+	    $ok = undef;
 	    last;
 	}
     }
-    return wantarray ? @output : $err;
+    return wantarray ? @output : $ok;
 }
 
 # waitfor now stores prompts to $obj->last_prompt()
@@ -200,55 +212,54 @@ sub waitfor {
     my $self = shift;
     return unless @_;
 
+    # $isa_prompt will be built into a regex that matches all currently
+    # valid prompts.
+    #
+    # -Match args will be added to this regex. The current prompt will
+    # be appended when all -Matches have been exhausted.
+    my $isa_prompt;
+
     # Things that /may/ be prompt regexps.
-    my $meta_prompt_regexp = $self->prompt
-	                    . '|' . quotemeta( '/password[: ]*$/' )
-			    . '|' . quotemeta( '/login[: ]*$/'    )
-			    . '|' . quotemeta( '/username[: ]*$/' );
+    my $promptish = '^\s*(?:/|m\s*\W).*';
 
-    # Things we've determined to be prompt regexps.
-    # An eval would probably be better. This won't match
-    # a regexp like m(match_this).
-    my ( $prompt_regexp ) = $self->prompt =~ m(^/([^/]*)/[gcimosx]*$);
 
-    ## Determine if waitfor() was passed something
-    ## that looks like a prompt.
-
-    # Parse the -Match => '/prompt \$' type options.
+    # Parse the -Match => '/prompt \$' type options
+    # waitfor can accept more than one -Match argument, so we can't just
+    # hashify the args.
     if ( @_ >= 2 ) {
-	my %args = @_;
-
-	while ( my ( $k, $v ) = each %args ) {
-	    if ( $k =~ /^-?match$/i
-		 && $v =~ /^($meta_prompt_regexp)$/ ) {
-
-		# Add "or" blocks to the regexp if
-		# we already have a potential prompt.
-
-		my ( $addme ) = $1 =~ m(^/(.*)/[gcimosx]*$);
-		$prompt_regexp .= "|$addme";
+	my @args = @_;
+	while ( my ( $k, $v ) = splice @args, 0, 2 ) {
+	    if ( $k =~ /^-?[Mm]atch$/ && $v =~ /($promptish)/ ) {
+		if ( my $addme = re_sans_delims($1) ) {
+		    $isa_prompt .= $isa_prompt ? "|$addme" : $addme;
+		} else {
+		    return $self->error("Bad regexp '$1' passed to waitfor().");
+		}
 	    }
 	}
-    # A single argument is always a match. Parse.
     } elsif ( @_ == 1 ) {
-	if ( $_[0] =~ /^($meta_prompt_regexp)$/ ) {
-	    my ( $addme ) = $1 =~ m(^/([^/]*)/[gcimosx]*$);
-	    $prompt_regexp .= "|$addme";
+	# A single argument is always a match.
+	if ( $_[0] =~ /($promptish)/ and my $addme = re_sans_delims($1) ) {
+	    $isa_prompt .= $isa_prompt ? "|$addme" : $addme;
+	} else {
+	    return $self->error("Bad regexp '$_[0]' passed to waitfor().");
 	}
+    }
+
+    # Add the current prompt if it's not already there.
+    if ( index($isa_prompt, $self->prompt) != -1
+	 and my $addme = re_sans_delims($self->prompt) ) {
+	$isa_prompt .= "|$addme";
     }
 
     # Call the real waitfor.
-    my ( $prematch, $match ) = $self->SUPER::waitfor( @_ );
+    my ( $prematch, $match ) = $self->SUPER::waitfor(@_);
 
-    # If waitfor was, in fact, passed a prompt, find it,
-    # and save for later.
-
-    if ( $prompt_regexp
-	 && defined $match
-	 && $match =~ /($prompt_regexp)/i ) {
-	$ {*$self}{net_telnet_cisco}{last_prompt} = $1;
+    # If waitfor was, in fact, passed a prompt then find and store it.
+    if ( $isa_prompt && defined $match ) {
+	(${*$self}{net_telnet_cisco}{last_prompt})
+	    = $match =~ /($isa_prompt)/;
     }
-
     return wantarray ? ( $prematch, $match ) : 1;
 }
 
@@ -278,12 +289,11 @@ sub login {
     $self->timed_out('');
     return if $self->eof;
     $cmd_prompt = $self->prompt;
-    $usage = 'usage: $obj->login(Name => $name, Password => $password, ' .
-	'[Prompt => $match,] [Timeout => $secs,])';
+    $usage = 'usage: $obj->login(Name => $name, Password => $password, '
+	   . '[Prompt => $match,] [Timeout => $secs,])';
 
     if (@_ == 3) {  # just username and passwd given
-	$username = $_[1];
-	$passwd = $_[2];
+	($username, $passwd) = (@_[1,2]);
     }
     else {  # named args given
 	## Get the named args.
@@ -308,7 +318,8 @@ sub login {
 		return $self->error("bad match operator: ",
 				    "opening delimiter missing: $cmd_prompt")
 		    unless ($cmd_prompt =~ m(^\s*/)
-			    or $cmd_prompt =~ m(^\s*m\s*\W));
+			    or $cmd_prompt =~ m(^\s*m\s*\W)
+			   );
 	    }
 	    elsif (/^-?timeout$/i) {
 		$timeout = _parse_timeout($args{$_});
@@ -354,23 +365,22 @@ sub login {
 	};
 
     ## Wait for login prompt.
-    # Net::Telnet::Cisco: added password match & modified error messages.
-    ($prematch, $match) = $self->waitfor(-match => '/login[: ]*$/i',
-					 -match => '/username[: ]*$/i',
-					 -match => '/password[: ]*$/i')
+    ($prematch, $match) = $self->waitfor(-match => '/[Ll]ogin[:\s]*$/',
+					 -match => '/[Uu]sername[:\s]*$/',
+					 -match => '/[Pp]assword[:\s]*$/')
 	or do {
 	    return &$error("read eof waiting for login or password prompt")
 		if $self->eof;
 	    return &$error("timed-out waiting for login or password prompt");
 	};
 
-    unless ( $match =~ /pass/i ) { # Net::Telnet::Cisco
+    unless ( $match =~ /[Pp]ass/ ) {
 	## Send login name.
 	$self->print($username)
   	    or return &$error("login disconnected");
 
 	## Wait for password prompt.
-	$self->waitfor(-match => '/password[: ]*$/i')
+	$self->waitfor(-match => '/[Pp]assword[: ]*$/')
 	    or do {
 		return &$error("read eof waiting for password prompt")
 		    if $self->eof;
@@ -383,10 +393,9 @@ sub login {
         or return &$error("login disconnected");
 
     ## Wait for command prompt or another login prompt.
-    ($prematch, $match) = $self->waitfor(-match => '/login[: ]*$/i',
-					 -match => '/username[: ]*$/i',
-					 # Net::Telnet::Cisco:
-					 -match => '/password[: ]*$/i',
+    ($prematch, $match) = $self->waitfor(-match => '/[Ll]ogin[:\s]*$/',
+					 -match => '/[Uu]sername[:\s]*$/',
+					 -match => '/[Pp]assword[:\s]*$/',
 					 -match => $cmd_prompt)
 	or do {
 	    return &$error("read eof waiting for command prompt")
@@ -399,16 +408,17 @@ sub login {
 
     ## It's a bad login if we got another login prompt.
     return $self->error("login failed: access denied or bad name or password")
-	if $match =~ /login[: ]*$/i
-	    || $match =~ /username[: ]*$/i
-	    || $match =~ /password[: ]*$/i; # Net::Telnet::Cisco
+	if $match =~ /(?:[Ll]ogin|[Uu]sername|[Pp]assword)[: ]*$/;
 
     1;
 } # end sub login
 
 #------------------------------
-# Support subs
+# Class methods
 #------------------------------
+
+# Return a Net::Telnet regular expression without the delimiters.
+sub re_sans_delims { ( $_[0] =~ m(^\s*m?\s*(\W)(.*)\1\s*$) )[1] }
 
 # Look for subroutines in Net::Telnet if we can't find them here.
 sub AUTOLOAD {
@@ -428,7 +438,7 @@ Net::Telnet::Cisco - interact with a Cisco router
 
   use Net::Telnet::Cisco;
 
-  my $cs = Net::Telnet::Cisco->( Host => '123.123.123.123' );
+  my $cs = Net::Telnet::Cisco->new( Host => '123.123.123.123' );
   $cs->login( 'login', 'password' );
 
   # Turn off paging
@@ -451,6 +461,14 @@ Net::Telnet::Cisco - interact with a Cisco router
   print "Cmd output: <",   @cmd_output,      ">\n";
   print "-" x 30, "\n";
 
+  # Try out enable mode
+  if ( $cs->enable("enable_password") ) {
+      @cmd_output = $cs->cmd('show privilege');
+      print "Cmd output: <", @cmd_output, ">\n";
+  } else {
+      warn "Can't enable: " . $cs->errmsg;
+  }
+
   $cs->close;
 
 =head1 DESCRIPTION
@@ -460,8 +478,9 @@ for dealing with Cisco routers.
 
 Things you should know:
 
-The default cmd_prompt is /[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/, suitable for
-matching promtps like 'rtrname$ ', 'rtrname# ', and 'rtrname> (enable) '.
+The default cmd_prompt is /[\w().-]*[\$#>]\s?(?:\(enable\))?\s*$/,
+suitable for matching promtps like 'rtrname$ ', 'rtrname# ', and
+'rtrname> (enable) '.
 
 cmd() parses router-generated error messages - the kind that
 begin with a '%' - and stows them in $obj->errmsg(), so that
@@ -474,9 +493,9 @@ understanding of Net::Telnet, so perldoc Net::Telnet first, and then
 come back to Net::Telnet::Cisco to see where the improvements are.
 
 Some things are easier to accomplish with Net::SNMP. SNMP has three
-advantages: it tends to be faster, handles errors better, and doesn't
-use any vtys on the router. SNMP does have some limitations, so for
-anything you can't accomplish with SNMP, there's Net::Telnet::Cisco.
+advantages: it's faster, handles errors better, and doesn't use any
+vtys on the router. SNMP does have some limitations, so for anything
+you can't accomplish with SNMP, there's Net::Telnet::Cisco.
 
 =head1 METHODS
 
@@ -507,20 +526,27 @@ This method exits the router's privileged mode.
 
     $match = $obj->last_prompt;
 
-last_prompt() will return undef if the program has not matched a
-prompt yet.
+last_prompt() will return '' if the program has not yet matched a
+prompt.
 
 =item B<login> - login to a router.
 
-Supercedes Net::Telnet::login(). Net::Telnet::Cisco will correctly
-log into a router if the session begins with a password prompt
-(and ignores the login or username step entirely).
+    $ok = $obj->login($username, $password);
+
+    $ok = $obj->login(Name     => $username,
+                      Password => $password,
+                      [Prompt  => $match,]
+                      [Timeout => $secs,]);
+
+Net::Telnet::Cisco will correctly log into a router if the session
+begins with a password prompt (and ignores the login or username
+step entirely).
 
 =back
 
 =head1 AUTHOR
 
-Joshua_Keroes@eli.net $Date: 2000/07/25 00:05:17 $
+Joshua_Keroes@eli.net $Date: 2000/07/30 22:16:51 $
 
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.

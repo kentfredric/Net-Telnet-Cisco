@@ -1,4 +1,4 @@
-$Id: Changes,v 1.4 2000/07/25 00:05:17 jkeroes Exp $
+$Id: Changes,v 1.2 2000/07/30 22:16:51 jkeroes Exp $
 
 Revision history for Perl extension Net::Telnet::Cisco.
 
@@ -14,3 +14,15 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- prompt() and is_enabled() handle prompts with '(enable)' in them.
 	- Added Windows installation tips to INSTALL.
 	- test.pl keeps a log (test.log) of the session if there were errors.
+
+1.03  Sun Jul 30 14:58:44 PDT 2000
+	- Found and fixed bug in enable(), hopefully forever.
+	- cmd() and waitfor() properly handle multiple args.
+	- waitfor() handles -Match args with m<delim>...<delim> notation.
+	- Fixed occasional bug where last_prompt would return a
+	  regex matching a prompt and not the prompt itself.
+	- Added enable() block to POD's Synopsis.
+	- Added "new" to the constructor in POD's Synopsis.
+	- Improved default prompt:
+	  Old: /[\w\s().-]*[\$#>]\s?(?:\(enable\))?\s*$/'
+	  New:   /[\w().-]*[\$#>]\s?(?:\(enable\))?\s*$/
