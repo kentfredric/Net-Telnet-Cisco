@@ -1,0 +1,99 @@
+NAME
+    Net::Telnet::Cisco - interact with a Cisco router
+
+SYNOPSIS
+      use Net::Telnet::Cisco;
+
+      my $cs = Net::Telnet::Cisco->( Host => '123.123.123.123' );
+      $cs->login( 'login', 'password' );
+
+      # Turn off paging
+      my @cmd_output = $cs->cmd( 'terminal length 0' );
+
+      # Execute a command
+      @cmd_output = $cs->cmd( 'show running-config' );
+      print @cmd_output;
+
+      # Generate an error on purpose
+      # This error handler prints the errmsg and continues.
+      $cs->errmode( sub { print @_, "\n" } );
+
+      @cmd_output = $cs->cmd( 'asdf' ); # Bad command.
+
+      print "-" x 30, "\n";
+      print "Last prompt: <",  $cs->last_prompt, ">\n";
+      print "Last command: <", $cs->last_cmd,    ">\n";
+      print "Last error: <",   $cs->errmsg,      ">\n";
+      print "Cmd output: <",   @cmd_output,      ">\n";
+      print "-" x 30, "\n";
+
+      $cs->close;
+
+DESCRIPTION
+    Net::Telnet::Cisco provides additional functionality to Net::Telnet for
+    dealing with Cisco routers.
+
+    Things you should know:
+
+    The default cmd_prompt is /[\w\(\)\.-]*[\$#>]$/, suitable for matching
+    'rtrname#'.
+
+    cmd() parses router-generated error messages - the kind that begin with
+    a '%' - and stows them in $obj->errmsg(), so that errmode can be used to
+    perform automatic error-handling actions.
+
+FIRST
+    Before you use Net::Telnet::Cisco, you should probably have a good
+    understanding of Net::Telnet, so perldoc Net::Telnet first, and then
+    come back to Net::Telnet::Cisco to see where the improvements are.
+
+    Some things are easier to accomplish with Net::SNMP. SNMP has three
+    advantages: it tends to be faster, handles errors better, and doesn't
+    use any vtys on the router. SNMP does have some limitations, so for
+    anything you can't accomplish with SNMP, there's Net::Telnet::Cisco.
+
+METHODS
+    New methods not found in Net::Telnet follow:
+
+    enable - enter enabled mode
+            $ok = $obj->enable;
+
+            $ok = $obj->enable( $password );
+
+        This method changes privilege level to enabled mode, (i.e. root)
+
+        If an argument is provided by the caller, it will be used as a
+        password.
+
+        enable() returns 1 on success and undef on failure.
+
+    disable - leave enabled mode
+            $ok = $obj->disable;
+
+        This method exits the router's privileged mode.
+
+    last_prompt - displays the last prompt matched by prompt()
+            $match = $obj->last_prompt;
+
+        last_prompt() will return undef if the program has not matched a
+        prompt yet.
+
+    login - login to a router.
+        Supercedes Net::Telnet::login(). Net::Telnet::Cisco will correctly
+        log into a router if the session begins with a password prompt (and
+        ignores the login or username step entirely).
+
+AUTHOR
+    Joshua_Keroes@eli.net $Date: 2000/07/14 18:13:16 $
+
+    It would greatly amuse the author if you would send email to him and
+    tell him how you are using Net::Telnet::Cisco.
+
+SEE ALSO
+    Net::Telnet, Net::SNMP
+
+COPYRIGHT
+    Copyright (c) 2000 Joshua Keroes, Electric Lightwave Inc. All rights
+    reserved. This program is free software; you can redistribute it and/or
+    modify it under the same terms as Perl itself.
+
