@@ -753,7 +753,7 @@ sub _normalize {
     1 while s/[^\cH\c?][\cH\c?]//mg; # ^H ^?
     s/^.*\cU//mg;		     # ^U
 
-    return wantarray ? split /$/mg, $_ : $_; # ORS instead?
+    return wantarray ? split /$/m, $_ : $_; # ORS instead?
 }
 
 # Lifted from Net::Telnet en toto
